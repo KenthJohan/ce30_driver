@@ -1,6 +1,6 @@
 #ifndef EXPORT_H
 #define EXPORT_H
-
+/*
 #ifdef _WIN32
 #	ifdef ce30_driver_EXPORTS
 #		define API __declspec(dllexport)
@@ -10,5 +10,7 @@
 #else
 #	define API
 #endif // WIN32
+*/
+#define API
 
 #endif // EXPORT_H
