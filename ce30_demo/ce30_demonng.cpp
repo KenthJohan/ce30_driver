@@ -278,57 +278,84 @@ static void particle_method (nng_socket sock, float const p[], unsigned n, struc
 */
 
 
-#define VOX_XN 50
-#define VOX_YN 20
+#define VOX_XN 60
+#define VOX_YN 30
 #define VOX_ZN 10
 #define VOX_I(x,y,z) ((z)*VOX_XN*VOX_YN + (y)*VOX_XN + (x))
 #define VOX_SCALE 0.1f
 
 
-
+/**
+ * @brief main_vox_neighbor
+ * @param v 3D array of id
+ * @param x Origin coordinate
+ * @param y Origin coordinate
+ * @param z Origin coordinate
+ */
 static void main_vox_neighbor (uint8_t v[], uint8_t x, uint8_t y, uint8_t z)
 {
+	ASSERT (x > 0);
+	ASSERT (y > 0);
+	ASSERT (z > 0);
+	ASSERT (x < (VOX_XN-1));
+	ASSERT (y < (VOX_YN-1));
+	ASSERT (z < (VOX_ZN-1));
 	static uint8_t id = 0;
-	uint32_t i = VOX_I(x, y, z);
-	uint32_t i000 = v[VOX_I(x-1, y-1, z-1)];
-	uint32_t i001 = v[VOX_I(x-1, y-1, z+1)];
-	uint32_t i010 = v[VOX_I(x-1, y+1, z-1)];
-	uint32_t i011 = v[VOX_I(x-1, y+1, z+1)];
-	uint32_t i100 = v[VOX_I(x+1, y-1, z-1)];
-	uint32_t i101 = v[VOX_I(x+1, y-1, z+1)];
-	uint32_t i110 = v[VOX_I(x+1, y+1, z-1)];
-	uint32_t i111 = v[VOX_I(x+1, y+1, z+1)];
-	v[i] = 0;
-	if (0){}
-	else if (v[i] == v[i000]){v[i] = v[i000];}
-	else if (v[i] == v[i001]){v[i] = v[i001];}
-	else if (v[i] == v[i010]){v[i] = v[i010];}
-	else if (v[i] == v[i011]){v[i] = v[i011];}
-	else if (v[i] == v[i100]){v[i] = v[i100];}
-	else if (v[i] == v[i101]){v[i] = v[i101];}
-	else if (v[i] == v[i110]){v[i] = v[i110];}
-	else if (v[i] == v[i111]){v[i] = v[i111];}
-	else if (v[i] == 0)
+
+	//(3x3x3) convolution comparison where (x,y,z) is the origin and (a,b,c) is the neighbors:
+	for (uint8_t a = x - 1; a <= x + 1; ++a)
+	{
+		for (uint8_t b = y - 1; b <= y + 1; ++b)
+		{
+			for (uint8_t c = z - 1; c <= z + 1; ++c)
+			{
+				//Don't compare it selft:
+				if (VOX_I(a, b, c) == VOX_I(x, y, z)) {continue;}
+				//If neigbor is classified then copy the class:
+				if (v[VOX_I(a, b, c)] != 0)
+				{
+					v[VOX_I(x, y, z)] = v[VOX_I(a, b, c)];
+					goto loop_break;
+				}
+			}
+		}
+	}
+loop_break:
+	//If no neigbor had any class then generate a new one:
+	if (v[VOX_I(x, y, z)] == 0)
 	{
 		id++;
-		v[i] = id;
+		v[VOX_I(x, y, z)] = id;
 	}
 }
 
+
+/**
+ * @brief main_test_voxels
+ * @param sock Send voxels to GUI client
+ * @param voxel 3D array of ids
+ * @param p Pointcloud, array of 4D point (x,y,z,w), w is not used yet.
+ * @param n Number of points in pointcloud
+ */
 static void main_test_voxels (nng_socket sock, uint8_t voxel[VOX_XN*VOX_YN*VOX_ZN], float const p[], unsigned n)
 {
-	voxel[VOX_I(0,0,0)] = 122;
+	//Reset each voxel:
+	memset (voxel, 0, VOX_XN*VOX_YN*VOX_ZN);
+
+	//Iterate each point in pointcloud:
 	for (unsigned i = 0; i < n; ++i, p+=4)
 	{
+		//Map 3d points to a index in the 3D array:
 		float fx = (p[0])/VOX_SCALE;
 		float fy = (p[1])/VOX_SCALE;
 		float fz = (p[2])/VOX_SCALE;
 		uint8_t ux = fx;
 		uint8_t uy = fy+VOX_YN/2;
 		uint8_t uz = fz+VOX_ZN/2;
-		if (ux >= VOX_XN){continue;}
-		if (uy >= VOX_YN){continue;}
-		if (uz >= VOX_ZN){continue;}
+		//Do not proccess edges because those can not be compared with convolution:
+		if (ux >= (VOX_XN-1)){continue;}
+		if (uy >= (VOX_YN-1)){continue;}
+		if (uz >= (VOX_ZN-1)){continue;}
 		if (ux <= 0){continue;}
 		if (uy <= 0){continue;}
 		if (uz <= 0){continue;}
