@@ -19,7 +19,11 @@ In 3D computer graphics, a voxel represents a value on a regular grid in three-d
 
 #define LIDAR_W 320
 #define LIDAR_H 20
+#define LIDAR_WH LIDAR_W*LIDAR_H
 #define LIDAR_FPS 30
+#define LIDAR_FOV_W 60
+#define LIDAR_FOV_H 4
+#define LIDAR_INDEX(x,y) ((x)*LIDAR_H + (y))
 
 #define VOXEL_XN 60
 #define VOXEL_YN 30
@@ -34,6 +38,7 @@ In 3D computer graphics, a voxel represents a value on a regular grid in three-d
 enum main_nngsock
 {
 	MAIN_NNGSOCK_POINTCLOUD, //Used for showing raw data from the LIDAR i.e. the pointcloud
+	MAIN_NNGSOCK_POINTCLOUD_COLOR, //Used for showing raw data from the LIDAR i.e. the pointcloud
 	MAIN_NNGSOCK_PLANE, //Used for showing the ground plane. The data is 6 vertices of v4f32.
 	MAIN_NNGSOCK_TEX, //Used for showing the 2D image of the ground plane.
 	MAIN_NNGSOCK_VOXEL, //Used for showing the 3D image of the pointcloud.
