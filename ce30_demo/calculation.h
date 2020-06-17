@@ -42,6 +42,7 @@ enum main_nngsock
 	MAIN_NNGSOCK_PLANE, //Used for showing the ground plane. The data is 6 vertices of v4f32.
 	MAIN_NNGSOCK_TEX, //Used for showing the 2D image of the ground plane.
 	MAIN_NNGSOCK_VOXEL, //Used for showing the 3D image of the pointcloud.
+	MAIN_NNGSOCK_LINES,
 	MAIN_NNGSOCK_COUNT
 };
 
@@ -187,3 +188,35 @@ unsigned points_count
 		main_vox_neighbor (&id, voxel, ux, uy, uz);
 	}
 }
+
+
+
+struct gobj_line
+{
+	nng_socket sock;
+	uint32_t cap;
+	uint32_t last;
+	float * lines;//Stride=4
+};
+
+void gobj_line_push (struct gobj_line * obj, float x, float y, float z)
+{
+	float * lines = obj->lines + obj->last * 4;
+	lines[0] = x;
+	lines[1] = y;
+	lines[2] = z;
+	lines[3] = 1.0f;
+	obj->last++;
+}
+
+
+void gobj_line_send (struct gobj_line * obj)
+{
+	int r;
+	r = nng_send (obj->sock, obj->lines, obj->last*4*sizeof(float), 0);
+	if (r)
+	{
+		perror (nng_strerror (r));
+	}
+}
+
