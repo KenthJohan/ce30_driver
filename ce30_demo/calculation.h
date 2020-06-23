@@ -16,6 +16,7 @@ In 3D computer graphics, a voxel represents a value on a regular grid in three-d
 
 #define RGBA(r,g,b,a) (((r) << 0) | ((g) << 8) | ((b) << 16) | ((a) << 24))
 
+#define POINTS_DIM 4
 
 #define LIDAR_W 320
 #define LIDAR_H 20
@@ -37,12 +38,13 @@ In 3D computer graphics, a voxel represents a value on a regular grid in three-d
 //All socket connection is labeled here:
 enum main_nngsock
 {
-	MAIN_NNGSOCK_POINTCLOUD, //Used for showing raw data from the LIDAR i.e. the pointcloud
-	MAIN_NNGSOCK_POINTCLOUD_COLOR, //Used for showing raw data from the LIDAR i.e. the pointcloud
+	MAIN_NNGSOCK_POINTCLOUD_POS, //Used for showing raw data from the LIDAR i.e. the pointcloud
+	MAIN_NNGSOCK_POINTCLOUD_COL, //Used for showing raw data from the LIDAR i.e. the pointcloud
 	MAIN_NNGSOCK_PLANE, //Used for showing the ground plane. The data is 6 vertices of v4f32.
 	MAIN_NNGSOCK_TEX, //Used for showing the 2D image of the ground plane.
 	MAIN_NNGSOCK_VOXEL, //Used for showing the 3D image of the pointcloud.
-	MAIN_NNGSOCK_LINES,
+	MAIN_NNGSOCK_LINE_POS,
+	MAIN_NNGSOCK_LINE_COL,
 	MAIN_NNGSOCK_COUNT
 };
 
@@ -91,7 +93,38 @@ static void random_points (float v[], unsigned n)
 
 
 
+void points_read (char const s[], float p[], uint32_t *n)
+{
+	uint32_t i = 0;
+	float v[4] = {0.0f};
+	while (s[0] != '\0')
+	{
+		char * e;//Used for endptr of float token
+		v[0] = strtof (s, &e);//Convert string to float starting from (s)
+		if (e == s) {s++; continue;}//If parse fails then try again
+		s = e;//Parse success goto to next token
+		v[1] = strtof (s, &e);//Convert string to float starting from (s)
+		if (e == s) {s++; continue;}//If parse fails then try again
+		s = e;//Parse success goto to next token
+		v[2] = strtof (s, &e);//Convert string to float starting from (s)
+		if (e == s) {s++; continue;}//If parse fails then try again
+		s = e;//Parse success goto to next token
+		memcpy (p, v, sizeof(v));//If a entire point (v) got successfully parsed then copy this point into the point array (p)
+		p += 4;//The point array (p) consist of 4 dim points
+		i++;//Keep track of how many points got parsed
+	}
+	(*n) = i;
+}
 
+
+void points_print (float p[], uint32_t n)
+{
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		printf ("%f %f %f\n", p[0], p[1], p[2]);
+		p += 4;
+	}
+}
 
 
 

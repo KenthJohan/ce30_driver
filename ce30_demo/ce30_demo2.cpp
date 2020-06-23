@@ -35,7 +35,7 @@ int main()
 		unique_ptr<ParsedPacket> parsed = packet.Parse();
 		if (!parsed){continue;}
 		scan.AddColumnsFromPacket (*parsed);
-		if (!scan.Ready()){continue;}
+		if (!scan.Ready()){continue;}//Is frame is complete
 		float * p = points;
 		sum = 0.0f;
 		for (int x = 0; x < scan.Width(); ++x)

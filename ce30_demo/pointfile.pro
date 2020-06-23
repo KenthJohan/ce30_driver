@@ -19,3 +19,4 @@ LIBS += -lnng
 LIBS += -lws2_32 -lmswsock -ladvapi32 -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
 
 LIBS += -llapacke -lblas -lm
+LIBS += -lcblas
