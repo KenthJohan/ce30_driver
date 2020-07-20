@@ -37,24 +37,27 @@ void point_select (uint32_t pointcol[LIDAR_WH], int x, int y, uint32_t color)
 }
 
 
-
-void point_pca (float v[], uint32_t v_stride, uint32_t n, float c[3*3], float w[3])
+void point_mean (float x[], uint32_t ldx, uint32_t n, float mean[3])
 {
 	//3 dimensions:
 	uint32_t const dim = 3;
-	float mean[4] = {0};
 	memset (mean, 0, sizeof (float)*dim);
 	//Calculate the (mean) coordinate from (v):
-	vf32_addv (dim, mean, 0, mean, 0, v, v_stride, n);
+	vf32_addv (dim, mean, 0, mean, 0, x, ldx, n);
 	vsf32_mul (dim, mean, mean, 1.0f / (float)n);
 	//Move all (v) points to origin using coordinate (mean):
-	vf32_subv (dim, v, v_stride, v, v_stride, mean, 0, n);
+	vf32_subv (dim, x, ldx, x, ldx, mean, 0, n);
+}
+
+
+void point_covariance (float v[], uint32_t v_stride, uint32_t n, float c[3*3])
+{
+	//3 dimensions:
+	uint32_t const dim = 3;
 	//Calculate the covariance matrix (c) from (v):
 	memset (c, 0, sizeof (float)*dim*dim);
 	m3f32_symmetric_xxt (3, c, 3, v, v_stride, n);
 	vsf32_mul (dim*dim, c, c, 1.0f / ((float)n - 1.0f));
-	//Calculate the eigen vectors (c) and eigen values (w) from covariance matrix (c):
-	LAPACKE_ssyev (LAPACK_COL_MAJOR, 'V', 'U', dim, c, 3, w);
 }
 
 
@@ -86,67 +89,75 @@ void point_filter (float dst[], uint32_t dst_stride, float const src[], uint32_t
 }
 
 
-
-void convolution1 (float img[], uint32_t xn, uint32_t yn, uint32_t x0, uint32_t y0, float kernel[], float z)
+void point_project (float pix[], float imgf[], uint32_t xn, uint32_t yn, float v[], uint32_t v_stride, uint32_t x_count)
 {
-	if (x0 < 1){return;}
-	if (y0 < 2){return;}
-	if (x0 >= xn-1){return;}
-	if (y0 >= yn-2){return;}
-	//uint32_t index = ((uint32_t)y0 * xn) + (uint32_t)x0;
-	//img[index] += z;
-	//return;
-	for (int32_t x = -1; x <= 1; ++x)
-	{
-		for (int32_t y = -2; y <= 2; ++y)
-		{
-			uint32_t xi = x0 + x;
-			uint32_t yi = y0 + y;
-			img[yi*xn + xi] += kernel[y*3+x] * z;
-			//printf ("(%i %i) : %i\n", x, y, y * xn + x);
-		}
-	}
-	//printf ("\n");
-}
-
-
-void point_project (float pix[], uint32_t xn, uint32_t yn, float v[], uint32_t v_stride, uint32_t x_count)
-{
-	float counter[IMG_XN*IMG_YN] = {0.0f};
 	for (uint32_t i = 0; i < x_count; ++i, v += v_stride)
 	{
+		//(x,y) becomes the pixel position:
+		//Set origin in the middle of the image and 20 pixels becomes 1 meter:
 		float x = v[0]*20.0f + xn/2.0f;
 		float y = v[1]*20.0f + yn/2.0f;
+		//z-value becomes the pixel value:
+		float z = v[2];
+		//Crop the pointcloud to the size of the image;
 		if (x >= xn){continue;}
 		if (y >= yn){continue;}
 		if (x < 0){continue;}
 		if (y < 0){continue;}
-		float z = v[2];
-		float kernel[]=
-		{
-		-1.0f, -1.0f, -1.0f,
-		 0.0f,  0.0f,  0.0f,
-		 2.0f,  2.0f,  2.0f,
-		 0.0f,  0.0f,  0.0f,
-		-1.0f, -1.0f, -1.0f,
-		};
-		//z += 10.0f;
-		//convolution1 (pix, xn, yn, x, y, kernel, z);
+		//Convert (x,y) to index row-major:
 		uint32_t index = ((uint32_t)y * xn) + (uint32_t)x;
+		//z += 10.0f;
+		//If multiple points land on one pixel then it will be accumalted but it will also be normalized later on:
 		pix[index] += z;
-		counter[index] += 1.0f;
+		imgf[index] += 1.0f;
 		//pix[index] = 0.5f*pix[index] + 0.5f*z;
+	}
+
+	//Normalize every non zero pixel:
+	for (uint32_t i = 0; i < IMG_XN*IMG_YN; ++i)
+	{
+		if (imgf[i] > 0.0f)
+		{
+			pix[i] /= imgf[i];
+		}
 	}
 
 	for (uint32_t i = 0; i < IMG_XN*IMG_YN; ++i)
 	{
-		if (counter[i] > 0.0f)
-		{
-			pix[i] /= counter[i];
-		}
+		//Gradient convolution could be applied later so this statement will have no effect:
+		//It is important that this statement does not affect the end result:
+		//This statement test scenories where average pointcloud z-position is far of origin:
 		//pix[i] += 10.0f;
 	}
 }
+
+
+void image_convolution (float pix2[], float const pix[], int32_t xn, int32_t yn, float k[], int32_t kxn, int32_t kyn)
+{
+	int32_t kxn0 = kxn / 2;
+	int32_t kyn0 = kyn / 2;
+	//printf ("kxn0 %i\n", kxn0);
+	//printf ("kyn0 %i\n", kyn0);
+	for (int32_t y = kyn0; y < (yn-kyn0); ++y)
+	{
+		for (int32_t x = kxn0; x < (xn-kxn0); ++x)
+		{
+			float sum = 0.0f;
+			for (int32_t ky = 0; ky < kyn; ++ky)
+			{
+				for (int32_t kx = 0; kx < kxn; ++kx)
+				{
+					int32_t xx = x + kx - kxn0;
+					int32_t yy = y + ky - kyn0;
+					sum += pix[yy * xn + xx] * k[ky * kxn + kx];
+				}
+			}
+			pix2[y * xn + x] = sum;
+			//pix2[y * xn + x] = pix[y * xn + x];
+		}
+	}
+}
+
 
 
 void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, int32_t yn)
@@ -162,6 +173,7 @@ void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, in
 	  1.0f,  2.0f,  1.0f, //Skitrack dipping
 	 -1.0f, -4.0f, -1.0f, //Skitrack edge
 	};
+	/*
 	float kernel1[3*5] =
 	{
 	 0.0f,  0.0f,  0.0f,
@@ -170,27 +182,10 @@ void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, in
 	 0.0f,  0.0f,  0.0f,
 	 0.0f,  0.0f,  0.0f,
 	};
+	*/
 	vf32_normalize (kxn*kyn, kernel, kernel);
-	for (int32_t y = 1; y < (yn-1); ++y)
-	{
-		for (int32_t x = 2; x < (xn-2); ++x)
-		{
-			float sum = 0.0f;
-			for (int32_t ky = 0; ky < kyn; ++ky)
-			{
-				for (int32_t kx = 0; kx < kxn; ++kx)
-				{
-					int32_t xx = x + kx - 1;
-					int32_t yy = y + ky - 2;
-					sum += pix[yy * xn + xx] * kernel[ky * kxn + kx];
-				}
-			}
-			pix2[y * xn + x] = sum;
-			//pix2[y * xn + x] = pix[y * xn + x];
-		}
-	}
+	image_convolution (pix2, pix, xn, yn, kernel, kxn, kyn);
 }
-
 
 
 float image_best_line_slope (float const p[], uint32_t xn, uint32_t yn, uint32_t yp)
@@ -225,7 +220,14 @@ float image_best_line_slope (float const p[], uint32_t xn, uint32_t yn, uint32_t
 }
 
 
-
+/**
+ * @brief
+ * @param p
+ * @param xn
+ * @param yn
+ * @param yp
+ * @param k
+ */
 void image_visual_line (float p[], uint32_t xn, uint32_t yn, uint32_t yp, float k)
 {
 	for (uint32_t y = yp; y < yn-yp; ++y)
@@ -241,55 +243,14 @@ void image_visual_line (float p[], uint32_t xn, uint32_t yn, uint32_t yp, float 
 }
 
 
-
-
-/**
- * @brief Main algorihtm
- * @param[in,out] x         The pointcloud
- * @param[in]     x_stride  Specifies the byte offset between consecutive point in the pointcloud
- * @param[in]     n         Number of points in the pointcloud
- * @param[out]    pix1      Output image1
- * @param[out]    pix2      Output image2
- * @param[in]     pw        Width of image
- * @param[in]     ph        Height of image
- * @param[out]    c         Eigen vectors
- * @param[out]    w         Eigen values
- */
-static void the_algorithm (float x[], uint32_t x_stride, uint32_t n, float pix1[], float pix2[], uint32_t pw, uint32_t ph, float c[], float w[])
-{
-	//The algorihtm starts here:
-	//(Raw points) -> (filter) -> (PCA) -> (Proj2D) -> (2D Convolution)
-	point_filter (x, x_stride, x, x_stride, &n, 3, 1.0f);
-	point_pca ((float*)x, x_stride, n, c, w);
-	printf ("eigen vector:\n"); m3f32_print (c, stdout);
-	printf ("eigen value: %f %f %f\n", w[0], w[1], w[2]);
-	float rotation[3*3] =
-	{
-	c[3], c[6], c[0],
-	c[4], c[7], c[1],
-	c[5], c[8], c[2]
-	};
-	for (uint32_t i = 0; i < n; ++i)
-	{
-		float * v = x + (i * x_stride);
-		mv3f32_mul (v, rotation, v);
-	}
-	//cblas_sgemm (CblasColMajor, CblasTrans, CblasNoTrans, 4, point_pos1_count, 4, 1.0f, rotation, 4, point_pos1, 4, 0.0f, point_pos1, 4);
-	point_project (pix1, pw, ph, x, x_stride, n);
-	image_skitrack_convolution (pix2, pix1, pw, ph);
-}
-
-
-
-
 /**
  * @brief Create RGBA image visualisation
- * @param[out] img  The human friendly image
+ * @param[out] img  RGBA image
  * @param[in]  pix  The algorihtm friendly image
  * @param[in]  w    Width of the image
  * @param[in]  h    Height of the image
  */
-static void visual (uint32_t img[], float pix[], uint32_t w, uint32_t h)
+static void image_visual (uint32_t img[], float pix[], uint32_t w, uint32_t h)
 {
 	for (uint32_t i = 0; i < w*h; ++i)
 	{
@@ -301,7 +262,6 @@ static void visual (uint32_t img[], float pix[], uint32_t w, uint32_t h)
 		//pix_rgba[i] = RGBA (pix1[i] > 0.4f ? 0xFF : 0x00, 0x00, 0x00, 0xFF);
 	}
 }
-
 
 
 int main()
@@ -335,17 +295,41 @@ int main()
 
 
 
-	float pix1[IMG_XN*IMG_YN] = {0};
-	float pix2[IMG_XN*IMG_YN] = {0};
-	uint32_t pix_rgba[IMG_XN*IMG_YN] = {0};
-	float c[3*3];
-	float w[3];
-	the_algorithm (point_pos1, POINT_STRIDE, point_pos1_count, pix1, pix2, IMG_XN, IMG_YN, c, w);
-	float k = image_best_line_slope (pix2, IMG_XN, IMG_YN, 10);
-	image_visual_line (pix2, IMG_XN, IMG_YN, 10, k);
-	//visual (pix_rgba, pix1, IMG_XN, IMG_YN);
-	visual (pix_rgba, pix2, IMG_XN, IMG_YN);
+	float img1[IMG_XN*IMG_YN] = {0.0f};//Project points this image
+	float img2[IMG_XN*IMG_YN] = {0.0f};//Proccessed from img1
+	float imgf[IMG_XN*IMG_YN] = {0.0f};//Used for normalizing pixel
+	uint32_t imgv[IMG_XN*IMG_YN] = {0};//Used for visual confirmation that the algorithm works
+	float c[3*3];//Covariance matrix then eigen vector
+	float w[3];//Eigen values
+	float pc_mean[3];
 
+	//The algorihtm starts here:
+	//(Raw points) -> (filter) -> (PCA) -> (Proj2D) -> (2D Convolution)
+	point_filter (point_pos1, POINT_STRIDE, point_pos1, POINT_STRIDE, &point_pos1_count, 3, 1.0f);
+	point_mean (point_pos1, POINT_STRIDE, point_pos1_count, pc_mean);
+	point_covariance ((float*)point_pos1, POINT_STRIDE, point_pos1_count, c);
+	//Calculate the eigen vectors (c) and eigen values (w) from covariance matrix (c):
+	LAPACKE_ssyev (LAPACK_COL_MAJOR, 'V', 'U', 3, c, 3, w);
+	printf ("eigen vector:\n"); m3f32_print (c, stdout);
+	printf ("eigen value: %f %f %f\n", w[0], w[1], w[2]);
+	float rotation[3*3] =
+	{
+	c[3], c[6], c[0],
+	c[4], c[7], c[1],
+	c[5], c[8], c[2]
+	};
+	for (uint32_t i = 0; i < point_pos1_count; ++i)
+	{
+		float * v = point_pos1 + (i * POINT_STRIDE);
+		mv3f32_mul (v, rotation, v);
+	}
+	//cblas_sgemm (CblasColMajor, CblasTrans, CblasNoTrans, 4, point_pos1_count, 4, 1.0f, rotation, 4, point_pos1, 4, 0.0f, point_pos1, 4);
+	point_project (img1, imgf, IMG_XN, IMG_YN, point_pos1, POINT_STRIDE, point_pos1_count);
+	image_skitrack_convolution (img2, img1, IMG_XN, IMG_YN);
+	float k = image_best_line_slope (img2, IMG_XN, IMG_YN, 10);
+	image_visual_line (img2, IMG_XN, IMG_YN, 10, k);
+	//visual (pix_rgba, pix1, IMG_XN, IMG_YN);
+	image_visual (imgv, img2, IMG_XN, IMG_YN);
 	//pix_rgba[105*IMG_XN + 12] |= RGBA(0x00, 0x66, 0x00, 0x00);
 	//pix_rgba[0*IMG_XN + 1] |= RGBA(0x00, 0xFF, 0x00, 0xFF);
 	//pix_rgba[2*IMG_XN + 0] |= RGBA(0x00, 0xFF, 0xff, 0xFF);
@@ -437,7 +421,7 @@ int main()
 		perror (nng_strerror (r));
 		r = nng_send (socks[MAIN_NNGSOCK_POINTCLOUD_COL], pointcol, LIDAR_WH*sizeof(uint32_t), 0);
 		perror (nng_strerror (r));
-		r = nng_send (socks[MAIN_NNGSOCK_TEX], pix_rgba, IMG_XN*IMG_YN*sizeof(uint32_t), 0);
+		r = nng_send (socks[MAIN_NNGSOCK_TEX], imgv, IMG_XN*IMG_YN*sizeof(uint32_t), 0);
 		perror (nng_strerror (r));
 	}
 
