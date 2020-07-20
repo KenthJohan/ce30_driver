@@ -2,11 +2,22 @@
 #include <unistd.h>
 #include <stdio.h>
 
+//git clone https://github.com/nanomsg/nng
+//cd nng && mkdir build && cd build
+//cmake -G"MSYS Makefiles" .. -DCMAKE_INSTALL_PREFIX="C:\msys64\mingw64"
+//pacman -R cmake
+//pacman -S mingw-w64-x86_64-cmake
+//mingw32-make -j4
+//mingw32-make test
+//mingw32-make install
 #include <nng/nng.h>
 #include <nng/protocol/pair0/pair.h>
 #include <nng/supplemental/util/platform.h>
 
+//pacman -S mingw64/mingw-w64-x86_64-lapack
 #include <lapacke.h>
+
+//pacman -S mingw64/mingw-w64-x86_64-openblas
 #include <OpenBLAS/cblas.h>
 
 #include "csc/csc_debug_nng.h"
