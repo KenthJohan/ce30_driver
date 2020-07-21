@@ -15,7 +15,8 @@
 #include <nng/supplemental/util/platform.h>
 
 //pacman -S mingw64/mingw-w64-x86_64-lapack
-#include <lapacke.h>
+#include <OpenBLAS/lapack.h>
+#include <OpenBLAS/lapacke.h>
 
 //pacman -S mingw64/mingw-w64-x86_64-openblas
 #include <OpenBLAS/cblas.h>
@@ -290,12 +291,12 @@ int main()
 	//points_print (point, n);
 
 	nng_socket socks[MAIN_NNGSOCK_COUNT] = {{0}};
-	main_nng_pairdial (socks + MAIN_NNGSOCK_POINTCLOUD_POS, "tcp://192.168.1.176:9002");
-	main_nng_pairdial (socks + MAIN_NNGSOCK_POINTCLOUD_COL, "tcp://192.168.1.176:9003");
-	main_nng_pairdial (socks + MAIN_NNGSOCK_TEX,            "tcp://192.168.1.176:9004");
-	main_nng_pairdial (socks + MAIN_NNGSOCK_VOXEL,          "tcp://192.168.1.176:9005");
-	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_POS,       "tcp://192.168.1.176:9006");
-	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_COL,       "tcp://192.168.1.176:9007");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_POINTCLOUD_POS, "tcp://localhost:9002");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_POINTCLOUD_COL, "tcp://localhost:9003");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_TEX,            "tcp://localhost:9004");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_VOXEL,          "tcp://localhost:9005");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_POS,       "tcp://localhost:9006");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_COL,       "tcp://localhost:9007");
 
 	/*
 	for (uint32_t i = 0; i < point_pos1_count; ++i)
@@ -321,6 +322,7 @@ int main()
 	point_covariance ((float*)point_pos1, POINT_STRIDE, point_pos1_count, c);
 	//Calculate the eigen vectors (c) and eigen values (w) from covariance matrix (c):
 	LAPACKE_ssyev (LAPACK_COL_MAJOR, 'V', 'U', 3, c, 3, w);
+	//LAPACK_ssyev ();
 	printf ("eigen vector:\n"); m3f32_print (c, stdout);
 	printf ("eigen value: %f %f %f\n", w[0], w[1], w[2]);
 	float rotation[3*3] =

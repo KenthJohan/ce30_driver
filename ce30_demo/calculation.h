@@ -74,7 +74,7 @@ static void main_nng_pairdial (nng_socket * sock, char const * address)
 	int r;
 	r = nng_pair0_open (sock);
 	NNG_EXIT_ON_ERROR (r);
-	r = nng_dial (*sock, address, NULL, 0);
+	r = nng_dial (*sock, address, NULL, NNG_FLAG_NONBLOCK);
 	NNG_EXIT_ON_ERROR (r);
 }
 
