@@ -10,15 +10,15 @@
 //mingw32-make -j4
 //mingw32-make test
 //mingw32-make install
+//-lnng
 #include <nng/nng.h>
 #include <nng/protocol/pair0/pair.h>
 #include <nng/supplemental/util/platform.h>
 
-//pacman -S mingw64/mingw-w64-x86_64-lapack
+//pacman -S mingw64/mingw-w64-x86_64-openblas
+//-lopenblas
 #include <OpenBLAS/lapack.h>
 #include <OpenBLAS/lapacke.h>
-
-//pacman -S mingw64/mingw-w64-x86_64-openblas
 #include <OpenBLAS/cblas.h>
 
 #include "csc/csc_debug_nng.h"
@@ -311,7 +311,7 @@ int main()
 	float img2[IMG_XN*IMG_YN] = {0.0f};//Proccessed from img1
 	float imgf[IMG_XN*IMG_YN] = {0.0f};//Used for normalizing pixel
 	uint32_t imgv[IMG_XN*IMG_YN] = {0};//Used for visual confirmation that the algorithm works
-	float c[3*3];//Covariance matrix then eigen vector
+	float c[3*3];//Covariance matrix first then 3x eigen vectors
 	float w[3];//Eigen values
 	float pc_mean[3];
 
@@ -321,6 +321,7 @@ int main()
 	point_mean (point_pos1, POINT_STRIDE, point_pos1_count, pc_mean);
 	point_covariance ((float*)point_pos1, POINT_STRIDE, point_pos1_count, c);
 	//Calculate the eigen vectors (c) and eigen values (w) from covariance matrix (c):
+	//https://software.intel.com/sites/products/documentation/doclib/mkl_sa/11/mkl_lapack_examples/dsyev.htm
 	LAPACKE_ssyev (LAPACK_COL_MAJOR, 'V', 'U', 3, c, 3, w);
 	//LAPACK_ssyev ();
 	printf ("eigen vector:\n"); m3f32_print (c, stdout);
