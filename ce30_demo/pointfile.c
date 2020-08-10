@@ -1,4 +1,3 @@
-#include <float.h>
 #include <unistd.h>
 #include <stdio.h>
 
@@ -105,6 +104,7 @@ void point_project (float pix[], float imgf[], uint32_t xn, uint32_t yn, float v
 {
 	for (uint32_t i = 0; i < x_count; ++i, v += v_stride)
 	{
+		//v[2] += 1.0f;
 		//(x,y) becomes the pixel position:
 		//Set origin in the middle of the image and 20 pixels becomes 1 meter:
 		float x = v[0]*20.0f + xn/2.0f;
@@ -139,7 +139,7 @@ void point_project (float pix[], float imgf[], uint32_t xn, uint32_t yn, float v
 		//Gradient convolution could be applied later so this statement will have no effect:
 		//It is important that this statement does not affect the end result:
 		//This statement test scenories where average pointcloud z-position is far of origin:
-		//pix[i] += 10.0f;
+		pix[i] += 10.0f;
 	}
 }
 
@@ -226,8 +226,9 @@ float image_best_line_slope (float const p[], uint32_t xn, uint32_t yn, uint32_t
 			highscore = score;
 			k1 = k;
 		}
-		printf ("sum %f : %f\n", k, score);
+		printf ("sum:  %+f : %f\n", k, score);
 	}
+	printf ("best: %+f : %f\n", k1, highscore);
 	return k1;
 }
 
@@ -240,7 +241,7 @@ float image_best_line_slope (float const p[], uint32_t xn, uint32_t yn, uint32_t
  * @param yp
  * @param k
  */
-void image_visual_line (float p[], uint32_t xn, uint32_t yn, uint32_t yp, float k)
+void image_visual_line (float p[], uint32_t xn, uint32_t yn, uint32_t yp, float k, float q[])
 {
 	for (uint32_t y = yp; y < yn-yp; ++y)
 	{
@@ -250,28 +251,90 @@ void image_visual_line (float p[], uint32_t xn, uint32_t yn, uint32_t yp, float 
 			float yy = y + x*k;
 			sum += p[(int)yy*xn + x];
 		}
-		p[y*xn+0] = sum * (1.0f / (float)xn);
+		//p[y*xn+0] = sum * (1.0f / (float)xn);
+		float val = sum * (1.0f / (float)xn);
+		q[y] = val;
+		float yy = (float)y + ((float)xn-1.0f)*k;
+		yy = CLAMP (yy, 0, yn);
+		//q[(int)yy] = val;
 	}
+}
+
+
+void image_peaks (float const q[], uint32_t n, float u[])
+{
+	uint32_t kn = 13;
+	uint32_t kn0 = kn / 2;
+	float k[13] = {1.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 2.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f};
+	vf32_normalize (kn, k, k);
+
+	for (uint32_t i = kn0; i < n-kn0; ++i)
+	{
+		float sum = 0.0f;
+		for (uint32_t j = 0; j < kn; ++j)
+		{
+			sum += q[i - kn0 + j] * k[j];
+		}
+		u[i] = sum;
+	}
+}
+
+
+void image_max (float q[], uint32_t n, uint32_t g[], uint32_t m, uint32_t r)
+{
+	for (uint32_t j = 0; j < m; ++j)
+	{
+		float max = __FLT_MIN__;
+		uint32_t imax = 0;
+		for (uint32_t i = r; i < n-r; ++i)
+		{
+			if (q[i] > max)
+			{
+				max = q[i];
+				imax = i;
+			}
+		}
+		for (uint32_t i = imax-r; i < imax+r; ++i)
+		{
+			q[i] = 0.0f;
+		}
+		g[j] = imax;
+	}
+
+
 }
 
 
 /**
  * @brief Create RGBA image visualisation
- * @param[out] img  RGBA image
- * @param[in]  pix  The algorihtm friendly image
+ * @param[out] img  RGBA image visual
+ * @param[in]  pix  Grayscale image
  * @param[in]  w    Width of the image
  * @param[in]  h    Height of the image
  */
-static void image_visual (uint32_t img[], float pix[], uint32_t w, uint32_t h)
+static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn, float q[], uint32_t g[], uint32_t m)
 {
-	for (uint32_t i = 0; i < w*h; ++i)
+	for (uint32_t i = 0; i < xn*yn; ++i)
 	{
+		//Negatives becomes red and positives becomes greeen:
 		uint8_t r = CLAMP ((-pix[i])*3000.0f, 0.0f, 255.0f);
 		uint8_t g = CLAMP ((pix[i])*3000.0f, 0.0f, 255.0f);
 		//uint8_t r = CLAMP (pix1[i]*1000.0f, 0.0f, 255.0f);
 		//uint8_t g = CLAMP (-pix1[i]*1000.0f, 0.0f, 255.0f);
-		img[i] = RGBA (r, g, 0x00, 0x44);
+		img[i] = RGBA (r, g, 0x00, 0xFF);
 		//pix_rgba[i] = RGBA (pix1[i] > 0.4f ? 0xFF : 0x00, 0x00, 0x00, 0xFF);
+	}
+	for (uint32_t y = 0; y < yn; ++y)
+	{
+		uint8_t r = CLAMP ((-q[y])*3000.0f, 0.0f, 255.0f);
+		uint8_t g = CLAMP ((q[y])*3000.0f, 0.0f, 255.0f);
+		img[y*xn+0] = RGBA (r, g, 0x00, 0xFF);
+		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
+	}
+
+	for (uint32_t i = 0; i < m; ++i)
+	{
+		img[g[i]*xn+0] = RGBA (0x00, 0x00, 0xFF, 0xFF);
 	}
 }
 
@@ -280,6 +343,8 @@ int main()
 {
 	csc_crossos_enable_ansi_color();
 	char const * txtpoint = csc_malloc_file ("../ce30_demo/txtpoints/14_14_02_29138.txt");
+	//char const * txtpoint = csc_malloc_file ("../ce30_demo/txtpoints/14_14_02_29585.txt");
+
 
 	float point_pos1[LIDAR_WH*POINT_STRIDE] = {0.0f};
 	uint32_t point_pos1_count = LIDAR_WH;
@@ -307,8 +372,8 @@ int main()
 
 
 
-	float img1[IMG_XN*IMG_YN] = {0.0f};//Project points this image
-	float img2[IMG_XN*IMG_YN] = {0.0f};//Proccessed from img1
+	float img1[IMG_XN*IMG_YN] = {0.0f};//Projected points
+	float img2[IMG_XN*IMG_YN] = {0.0f};//Convolution from img1
 	float imgf[IMG_XN*IMG_YN] = {0.0f};//Used for normalizing pixel
 	uint32_t imgv[IMG_XN*IMG_YN] = {0};//Used for visual confirmation that the algorithm works
 	float c[3*3];//Covariance matrix first then 3x eigen vectors
@@ -332,6 +397,7 @@ int main()
 	c[4], c[7], c[1],
 	c[5], c[8], c[2]
 	};
+	//TODO: Do a matrix matrix multiplication instead of matrix vector multiplication:
 	for (uint32_t i = 0; i < point_pos1_count; ++i)
 	{
 		float * v = point_pos1 + (i * POINT_STRIDE);
@@ -341,9 +407,14 @@ int main()
 	point_project (img1, imgf, IMG_XN, IMG_YN, point_pos1, POINT_STRIDE, point_pos1_count);
 	image_skitrack_convolution (img2, img1, IMG_XN, IMG_YN);
 	float k = image_best_line_slope (img2, IMG_XN, IMG_YN, 10);
-	image_visual_line (img2, IMG_XN, IMG_YN, 10, k);
+	float q[IMG_YN] = {0.0f};
+	float u[IMG_YN] = {0.0f};
+	image_visual_line (img2, IMG_XN, IMG_YN, 10, k, q);
+	image_peaks (q, IMG_YN, u);
+	uint32_t g[2] = {UINT32_MAX};
+	image_max (u, IMG_YN, g, 2, 10);
 	//visual (pix_rgba, pix1, IMG_XN, IMG_YN);
-	image_visual (imgv, img2, IMG_XN, IMG_YN);
+	image_visual (imgv, img2, IMG_XN, IMG_YN, u, g, 2);
 	//pix_rgba[105*IMG_XN + 12] |= RGBA(0x00, 0x66, 0x00, 0x00);
 	//pix_rgba[0*IMG_XN + 1] |= RGBA(0x00, 0xFF, 0x00, 0xFF);
 	//pix_rgba[2*IMG_XN + 0] |= RGBA(0x00, 0xFF, 0xff, 0xFF);
@@ -354,23 +425,22 @@ int main()
 	float lines[18*4] =
 	{
 	//Origin axis
-	0.0f, 0.0f, 0.0f, 1.0f,
-	1.0f, 0.0f, 0.0f, 1.0f,
-
-	0.0f, 0.0f, 0.0f, 1.0f,
-	0.0f, 1.0f, 0.0f, 1.0f,
-
-	0.0f, 0.0f, 0.0f, 1.0f,
-	0.0f, 0.0f, 1.0f, 1.0f,
+	0.0f, 0.0f, 0.0f, 1.0f, //Origin axis 1 start
+	1.0f, 0.0f, 0.0f, 1.0f, //Origin axis 1 end
+	0.0f, 0.0f, 0.0f, 1.0f, //Origin axis 2 start
+	0.0f, 1.0f, 0.0f, 1.0f, //Origin axis 2 end
+	0.0f, 0.0f, 0.0f, 1.0f, //Origin axis 3 start
+	0.0f, 0.0f, 1.0f, 1.0f, //Origin axis 3 end
 
 	//PCA axis
-	0.0f, 0.0f, 0.0f, 1.0f,
-	c[0], c[1], c[2], 1.0f,
-	0.0f, 0.0f, 0.0f, 1.0f,
-	c[3], c[4], c[5], 1.0f,
-	0.0f, 0.0f, 0.0f, 1.0f,
-	c[6], c[7], c[8], 1.0f,
+	0.0f, 0.0f, 0.0f, 1.0f, //PCA axis 1 start
+	c[0], c[1], c[2], 1.0f, //PCA axis 1 end
+	0.0f, 0.0f, 0.0f, 1.0f, //PCA axis 2 start
+	c[3], c[4], c[5], 1.0f, //PCA axis 2 end
+	0.0f, 0.0f, 0.0f, 1.0f, //PCA axis 3 start
+	c[6], c[7], c[8], 1.0f, //PCA axis 3 end
 
+	//TODO: What is this?
 	0.0f, 0.0f, 0.0f, 1.0f,
 	0.0f, 0.0f, 0.0f, 1.0f,
 	0.0f, 0.0f, 0.0f, 1.0f,
@@ -387,31 +457,27 @@ int main()
 	*/
 
 	};
-	{
-		int r;
-		r = nng_send (socks[MAIN_NNGSOCK_LINE_POS], lines, 18*4*sizeof(float), 0);
-		perror (nng_strerror (r));
-	}
+
 
 	uint32_t line_col[18] =
 	{
-	//Make origin X axis red:
-	//Make origin Y axis green:
-	//Make origin Z axis blue:
-	RGBA(0xFF, 0x00, 0x00, 0xFF),
-	RGBA(0xFF, 0x00, 0x00, 0xFF),
-	RGBA(0x00, 0xFF, 0x00, 0xFF),
-	RGBA(0x00, 0xFF, 0x00, 0xFF),
-	RGBA(0x00, 0x00, 0xFF, 0xFF),
-	RGBA(0x00, 0x00, 0xFF, 0xFF),
+	//Origin axis:
+	RGBA(0xFF, 0x00, 0x00, 0xFF), //Origin axis 1 start
+	RGBA(0xFF, 0x00, 0x00, 0xFF), //Origin axis 1 end
+	RGBA(0x00, 0xFF, 0x00, 0xFF), //Origin axis 2 start
+	RGBA(0x00, 0xFF, 0x00, 0xFF), //Origin axis 2 end
+	RGBA(0x00, 0x00, 0xFF, 0xFF), //Origin axis 3 start
+	RGBA(0x00, 0x00, 0xFF, 0xFF), //Origin axis 3 end
 
-	//PCA axis
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
+	//PCA axis colors:
+	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 1 start
+	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 1 end
+	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 2 start
+	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 2 end
+	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 3 start
+	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 3 end
+
+	//TODO: What is this?
 	RGBA(0xFF, 0xFF, 0xFF, 0x33),
 	RGBA(0xFF, 0xFF, 0xFF, 0x33),
 	RGBA(0xFF, 0xFF, 0xFF, 0x33),
@@ -420,17 +486,15 @@ int main()
 	RGBA(0xFF, 0xFF, 0xFF, 0x33),
 
 	};
+
+
+	//Send visual information to the graphic server:
 	{
 		int r;
+		r = nng_send (socks[MAIN_NNGSOCK_LINE_POS], lines, 18*4*sizeof(float), 0);
+		perror (nng_strerror (r));
 		r = nng_send (socks[MAIN_NNGSOCK_LINE_COL], line_col, 18*sizeof(uint32_t), 0);
 		perror (nng_strerror (r));
-	}
-
-
-
-
-	{
-		int r;
 		r = nng_send (socks[MAIN_NNGSOCK_POINTCLOUD_POS], point_pos1, LIDAR_WH*4*sizeof(float), 0);
 		perror (nng_strerror (r));
 		r = nng_send (socks[MAIN_NNGSOCK_POINTCLOUD_COL], pointcol, LIDAR_WH*sizeof(uint32_t), 0);
