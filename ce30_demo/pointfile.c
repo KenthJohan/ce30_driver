@@ -393,7 +393,7 @@ uint32_t skip_zero (float q[], uint32_t qn, uint32_t * qi)
 }
 
 
-void image_max (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
+void find_pattern (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
 {
 	uint32_t gi = 0;
 	uint32_t qi = 0;
@@ -435,7 +435,7 @@ void image_max (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
 
 
 
-void search_max (float q[], uint32_t qn, uint32_t g[], uint32_t gn, uint32_t r)
+void find_pattern2 (float q[], uint32_t qn, uint32_t g[], uint32_t gn, uint32_t r)
 {
 	float p[15] = {1, 1, 0,-1,-1,-1, 1, 2, 1,-1,-1,-1, 0, 1, 1};
 	r=15;
@@ -565,10 +565,10 @@ void show (const char * filename, nng_socket socks[])
 	image_visual_line (img3, IMG_XN, IMG_YN, 10, k, q);
 	filter (q, IMG_YN);
 	//image_peaks (q, IMG_YN, u);
-	uint32_t g[2] = {UINT32_MAX};
-	image_max (q, IMG_YN, g, 2);
+	uint32_t g[4] = {UINT32_MAX};
+	find_pattern (q, IMG_YN, g, 4);
 	//visual (pix_rgba, pix1, IMG_XN, IMG_YN);
-	image_visual (imgv, img1, IMG_XN, IMG_YN, q, g, 2);
+	image_visual (imgv, img1, IMG_XN, IMG_YN, q, g, 4);
 	//pix_rgba[105*IMG_XN + 12] |= RGBA(0x00, 0x66, 0x00, 0x00);
 	//pix_rgba[0*IMG_XN + 1] |= RGBA(0x00, 0xFF, 0x00, 0xFF);
 	//pix_rgba[2*IMG_XN + 0] |= RGBA(0x00, 0xFF, 0xff, 0xFF);
@@ -674,39 +674,21 @@ int main (int argc, char const * argv[])
 	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_POS,       "tcp://localhost:9006");
 	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_COL,       "tcp://localhost:9007");
 
-
-	show ("../ce30_demo/txtpoints/14_14_02_29138.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_02_29260.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_02_29353.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_02_29469.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_02_29585.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_02_29748.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_02_29845.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_02_29952.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_03_30081.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_03_30218.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_03_30334.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_03_30457.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_03_30581.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_03_30751.txt", socks);
-	sleep(1);
-	show ("../ce30_demo/txtpoints/14_14_03_30581.txt", socks);
-
-
-
+	chdir ("../ce30_demo/txtpoints");
+	///*
+	FILE * f = popen ("ls", "r");
+	ASSERT (f);
+	char buf[200] = {'\0'};
+	while (fgets (buf, sizeof (buf), f) != NULL)
+	{
+		buf[strcspn(buf, "\r\n")] = 0;
+		printf("OUTPUT: (%s)\n", buf);
+		show (buf, socks);
+		sleep (1);
+	}
+	pclose (f);
+	//*/
+	//show ("14_13_57_24254.txt", socks);
 	nng_close (socks[MAIN_NNGSOCK_POINTCLOUD_POS]);
 	nng_close (socks[MAIN_NNGSOCK_POINTCLOUD_COL]);
 	nng_close (socks[MAIN_NNGSOCK_TEX]);
