@@ -139,7 +139,7 @@ void point_project (float pix[], float imgf[], uint32_t xn, uint32_t yn, float v
 		//Gradient convolution could be applied later so this statement will have no effect:
 		//It is important that this statement does not affect the end result:
 		//This statement test scenories where average pointcloud z-position is far of origin:
-		pix[i] += 10.0f;
+		//pix[i] += 10.0f;
 	}
 }
 
@@ -174,17 +174,19 @@ void image_convolution (float pix2[], float const pix[], int32_t xn, int32_t yn,
 
 void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, int32_t yn)
 {
+	///*
 	int32_t kxn = 3;
 	int32_t kyn = 5;
 
 	float kernel[3*5] =
 	{
-	 -1.0f, -4.0f, -1.0f, //Skitrack edge
+	 -2.0f, -4.0f, -2.0f, //Skitrack edge
 	  1.0f,  2.0f,  1.0f, //Skitrack dipping
+	  2.0f,  3.0f,  2.0f, //Skitrack dipping
 	  1.0f,  2.0f,  1.0f, //Skitrack dipping
-	  1.0f,  2.0f,  1.0f, //Skitrack dipping
-	 -1.0f, -4.0f, -1.0f, //Skitrack edge
+	 -2.0f, -4.0f, -2.0f, //Skitrack edge
 	};
+	//*/
 	/*
 	float kernel1[3*5] =
 	{
@@ -195,6 +197,40 @@ void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, in
 	 0.0f,  0.0f,  0.0f,
 	};
 	*/
+	/*
+	int32_t kxn = 1;
+	int32_t kyn = 11;
+	float kernel[11] =
+	{
+	 1.0f,
+	 1.0f,
+	-1.0f,
+	-2.0f,
+	-1.0f,
+	 2.0f,
+	 2.0f,
+	-1.0f,
+	-2.0f,
+	-1.0f,
+	 1.0f,
+	};
+	*/
+	vf32_normalize (kxn*kyn, kernel, kernel);
+	image_convolution (pix2, pix, xn, yn, kernel, kxn, kyn);
+}
+
+
+void image_convolution1 (float pix2[], float const pix[], int32_t xn, int32_t yn)
+{
+	int32_t kxn = 3;
+	int32_t kyn = 3;
+
+	float kernel[3*3] =
+	{
+	 1.0f, 1.0f, 1.0f,
+	 1.0f, 2.0f, 1.0f,
+	 1.0f, 1.0f, 1.0f,
+	};
 	vf32_normalize (kxn*kyn, kernel, kernel);
 	image_convolution (pix2, pix, xn, yn, kernel, kxn, kyn);
 }
@@ -252,7 +288,7 @@ void image_visual_line (float p[], uint32_t xn, uint32_t yn, uint32_t yp, float 
 			sum += p[(int)yy*xn + x];
 		}
 		//p[y*xn+0] = sum * (1.0f / (float)xn);
-		float val = sum * (1.0f / (float)xn);
+		float val = sum;
 		q[y] = val;
 		float yy = (float)y + ((float)xn-1.0f)*k;
 		yy = CLAMP (yy, 0, yn);
@@ -280,28 +316,151 @@ void image_peaks (float const q[], uint32_t n, float u[])
 }
 
 
-void image_max (float q[], uint32_t n, uint32_t g[], uint32_t m, uint32_t r)
+uint32_t search_positive (float q[], uint32_t qn, uint32_t * qi, uint32_t count)
 {
-	for (uint32_t j = 0; j < m; ++j)
+	uint32_t n = 0;
+	while (count--)
 	{
-		float max = __FLT_MIN__;
-		uint32_t imax = 0;
-		for (uint32_t i = r; i < n-r; ++i)
+		if ((*qi) >= qn){break;}
+		if (q[(*qi)] <= 0.0f){break;}
+		(*qi)++;
+		n++;
+	}
+	return n;
+}
+
+uint32_t search_negative (float q[], uint32_t qn, uint32_t * qi, uint32_t count)
+{
+	uint32_t n = 0;
+	while (count--)
+	{
+		if ((*qi) >= qn){break;}
+		if (q[(*qi)] >= 0.0f){break;}
+		(*qi)++;
+		n++;
+	}
+	return n;
+}
+
+
+void filter (float q[], uint32_t qn)
+{
+	float pos = 0.0f;
+	float neg = 0.0f;
+	float pos_n = 0;
+	float neg_n = 0;
+	for (uint32_t i = 0; i < qn; ++i)
+	{
+		if (q[i] > 0.0f)
 		{
-			if (q[i] > max)
-			{
-				max = q[i];
-				imax = i;
-			}
+			pos += q[i];
+			pos_n += 1.0f;
 		}
-		for (uint32_t i = imax-r; i < imax+r; ++i)
+		else if (q[i] < 0.0f)
+		{
+			neg += q[i];
+			neg_n += 1.0f;
+		}
+	}
+	pos /= pos_n;
+	neg /= neg_n;
+	for (uint32_t i = 0; i < qn; ++i)
+	{
+		if ((q[i] > 0.0f) && (q[i] < pos))
 		{
 			q[i] = 0.0f;
 		}
-		g[j] = imax;
+		if ((q[i] < 0.0f) && (q[i] > neg))
+		{
+			q[i] = 0.0f;
+		}
 	}
+}
 
 
+
+uint32_t skip_zero (float q[], uint32_t qn, uint32_t * qi)
+{
+	uint32_t n = 0;
+	while (1)
+	{
+		if ((*qi) >= qn){break;}
+		if (q[(*qi)] != 0.0f){break;}
+		(*qi)++;
+		n++;
+	}
+	return n;
+}
+
+
+void image_max (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
+{
+	uint32_t gi = 0;
+	uint32_t qi = 0;
+	uint32_t n;
+	uint32_t c = 0;
+	while (1)
+	{
+		if (gi >= gn) {break;};
+		if (qi >= qn) {break;};
+
+		uint32_t qi0 = qi;
+
+		skip_zero (q, qn, &qi0);
+		n = search_positive (q, qn, &qi0, 100);
+		if (n < 1) {qi++; continue;};
+
+		skip_zero (q, qn, &qi0);
+		n = search_negative (q, qn, &qi0, 100);
+		if (n < 1 || n > 4) {qi++; continue;};
+
+		skip_zero (q, qn, &qi0);
+		n = search_positive (q, qn, &qi0, 100);
+		if (n < 1 || n > 4) {qi++; continue;}
+		c = qi0 - (n/2);
+
+		skip_zero (q, qn, &qi0);
+		n = search_negative (q, qn, &qi0, 100);
+		if (n < 1 || n > 4) {qi++; continue;};
+
+		skip_zero (q, qn, &qi0);
+		n = search_positive (q, qn, &qi0, 100);
+		if (n < 1) {qi++; continue;};
+
+		qi = qi0 + 10;
+		g[gi] = c;
+		gi++;
+	}
+}
+
+
+
+void search_max (float q[], uint32_t qn, uint32_t g[], uint32_t gn, uint32_t r)
+{
+	float p[15] = {1, 1, 0,-1,-1,-1, 1, 2, 1,-1,-1,-1, 0, 1, 1};
+	r=15;
+	for (uint32_t gi = 0; gi < gn; ++gi)
+	{
+		float max = 0.0f;
+		uint32_t imax = 0;
+		for (uint32_t i = (r/2); i < qn-(r/2); ++i)
+		{
+			float sum = 0.0f;
+			for (uint32_t j = 0; j < r; ++j)
+			{
+				sum += q[i]*p[j];
+			}
+			if (max < sum)
+			{
+				max = sum;
+				imax = i;
+				q[imax-1] = 0.0f;
+				q[imax] = 0.0f;
+				q[imax+1] = 0.0f;
+			}
+		}
+		g[gi] = imax;
+	}
 }
 
 
@@ -326,42 +485,33 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 	}
 	for (uint32_t y = 0; y < yn; ++y)
 	{
-		uint8_t r = CLAMP ((-q[y])*3000.0f, 0.0f, 255.0f);
-		uint8_t g = CLAMP ((q[y])*3000.0f, 0.0f, 255.0f);
+		uint8_t r = CLAMP ((-q[y])*300.0f, 0.0f, 255.0f);
+		uint8_t g = CLAMP ((q[y])*300.0f, 0.0f, 255.0f);
 		img[y*xn+0] = RGBA (r, g, 0x00, 0xFF);
 		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
 	}
 
 	for (uint32_t i = 0; i < m; ++i)
 	{
-		img[g[i]*xn+0] = RGBA (0x00, 0x00, 0xFF, 0xFF);
+		if (g[i] < yn)
+		{
+			img[g[i]*xn+1] = RGBA (0x00, 0x00, 0xFF, 0xFF);
+		}
 	}
 }
 
 
-int main()
+void show (const char * filename, nng_socket socks[])
 {
-	csc_crossos_enable_ansi_color();
-	char const * txtpoint = csc_malloc_file ("../ce30_demo/txtpoints/14_14_02_29138.txt");
-	//char const * txtpoint = csc_malloc_file ("../ce30_demo/txtpoints/14_14_02_29585.txt");
-
-
+	char const * txtpoint = csc_malloc_file (filename);
 	float point_pos1[LIDAR_WH*POINT_STRIDE] = {0.0f};
 	uint32_t point_pos1_count = LIDAR_WH;
+	points_read (txtpoint, point_pos1, &point_pos1_count);
+	free ((void*)txtpoint);
+	//points_print (point, n);
 
 	uint32_t pointcol[LIDAR_WH] = {0};
 	for (int i = 0; i < LIDAR_WH; ++i) {pointcol[i] = RGBA (0xFF, 0xFF, 0xFF, 0xFF);}
-
-	points_read (txtpoint, point_pos1, &point_pos1_count);
-	//points_print (point, n);
-
-	nng_socket socks[MAIN_NNGSOCK_COUNT] = {{0}};
-	main_nng_pairdial (socks + MAIN_NNGSOCK_POINTCLOUD_POS, "tcp://localhost:9002");
-	main_nng_pairdial (socks + MAIN_NNGSOCK_POINTCLOUD_COL, "tcp://localhost:9003");
-	main_nng_pairdial (socks + MAIN_NNGSOCK_TEX,            "tcp://localhost:9004");
-	main_nng_pairdial (socks + MAIN_NNGSOCK_VOXEL,          "tcp://localhost:9005");
-	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_POS,       "tcp://localhost:9006");
-	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_COL,       "tcp://localhost:9007");
 
 	/*
 	for (uint32_t i = 0; i < point_pos1_count; ++i)
@@ -370,10 +520,9 @@ int main()
 	}
 	*/
 
-
-
 	float img1[IMG_XN*IMG_YN] = {0.0f};//Projected points
 	float img2[IMG_XN*IMG_YN] = {0.0f};//Convolution from img1
+	float img3[IMG_XN*IMG_YN] = {0.0f};//Convolution from img2
 	float imgf[IMG_XN*IMG_YN] = {0.0f};//Used for normalizing pixel
 	uint32_t imgv[IMG_XN*IMG_YN] = {0};//Used for visual confirmation that the algorithm works
 	float c[3*3];//Covariance matrix first then 3x eigen vectors
@@ -406,15 +555,20 @@ int main()
 	//cblas_sgemm (CblasColMajor, CblasTrans, CblasNoTrans, 4, point_pos1_count, 4, 1.0f, rotation, 4, point_pos1, 4, 0.0f, point_pos1, 4);
 	point_project (img1, imgf, IMG_XN, IMG_YN, point_pos1, POINT_STRIDE, point_pos1_count);
 	image_skitrack_convolution (img2, img1, IMG_XN, IMG_YN);
-	float k = image_best_line_slope (img2, IMG_XN, IMG_YN, 10);
+	filter (img2, IMG_XN*IMG_YN);
+	image_convolution1 (img3, img2, IMG_XN, IMG_YN);
+	//filter (img3, IMG_XN*IMG_YN);
+
+
+	float k = image_best_line_slope (img3, IMG_XN, IMG_YN, 10);
 	float q[IMG_YN] = {0.0f};
-	float u[IMG_YN] = {0.0f};
-	image_visual_line (img2, IMG_XN, IMG_YN, 10, k, q);
-	image_peaks (q, IMG_YN, u);
+	image_visual_line (img3, IMG_XN, IMG_YN, 10, k, q);
+	filter (q, IMG_YN);
+	//image_peaks (q, IMG_YN, u);
 	uint32_t g[2] = {UINT32_MAX};
-	image_max (u, IMG_YN, g, 2, 10);
+	image_max (q, IMG_YN, g, 2);
 	//visual (pix_rgba, pix1, IMG_XN, IMG_YN);
-	image_visual (imgv, img2, IMG_XN, IMG_YN, u, g, 2);
+	image_visual (imgv, img1, IMG_XN, IMG_YN, q, g, 2);
 	//pix_rgba[105*IMG_XN + 12] |= RGBA(0x00, 0x66, 0x00, 0x00);
 	//pix_rgba[0*IMG_XN + 1] |= RGBA(0x00, 0xFF, 0x00, 0xFF);
 	//pix_rgba[2*IMG_XN + 0] |= RGBA(0x00, 0xFF, 0xff, 0xFF);
@@ -503,4 +657,62 @@ int main()
 		perror (nng_strerror (r));
 	}
 
+}
+
+
+
+
+int main (int argc, char const * argv[])
+{
+	csc_crossos_enable_ansi_color();
+
+	nng_socket socks[MAIN_NNGSOCK_COUNT] = {{0}};
+	main_nng_pairdial (socks + MAIN_NNGSOCK_POINTCLOUD_POS, "tcp://localhost:9002");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_POINTCLOUD_COL, "tcp://localhost:9003");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_TEX,            "tcp://localhost:9004");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_VOXEL,          "tcp://localhost:9005");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_POS,       "tcp://localhost:9006");
+	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_COL,       "tcp://localhost:9007");
+
+
+	show ("../ce30_demo/txtpoints/14_14_02_29138.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_02_29260.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_02_29353.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_02_29469.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_02_29585.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_02_29748.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_02_29845.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_02_29952.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_03_30081.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_03_30218.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_03_30334.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_03_30457.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_03_30581.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_03_30751.txt", socks);
+	sleep(1);
+	show ("../ce30_demo/txtpoints/14_14_03_30581.txt", socks);
+
+
+
+	nng_close (socks[MAIN_NNGSOCK_POINTCLOUD_POS]);
+	nng_close (socks[MAIN_NNGSOCK_POINTCLOUD_COL]);
+	nng_close (socks[MAIN_NNGSOCK_TEX]);
+	nng_close (socks[MAIN_NNGSOCK_VOXEL]);
+	nng_close (socks[MAIN_NNGSOCK_LINE_POS]);
+	nng_close (socks[MAIN_NNGSOCK_LINE_COL]);
+
+	return 0;
 }
