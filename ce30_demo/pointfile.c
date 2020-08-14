@@ -214,7 +214,7 @@ float image_best_line_slope (float const p[], uint32_t xn, uint32_t yn, uint32_t
 	float highscore = 0.0f;
 	float k1 = 0.0f;
 	float const delta = 0.1f;
-	for (float k = -0.5f; k < 0.5f; k += delta)
+	for (float k = -1.0f; k < 1.0f; k += delta)
 	{
 		float score = 0.0f;
 		for (uint32_t y = yp; y < yn-yp; ++y)
@@ -248,21 +248,27 @@ float image_best_line_slope (float const p[], uint32_t xn, uint32_t yn, uint32_t
 }
 
 
-void image_linesum (float p[], uint32_t xn, uint32_t yn, uint32_t yp, float k, float q[])
+void image_linesum (float p[], uint32_t xn, uint32_t yn, float k, float q[])
 {
-	for (uint32_t y = yp; y < yn-yp; ++y)
+	for (uint32_t y = 0; y < yn; ++y)
 	{
 		float sum = 0.0f;
 		for (uint32_t x = 0; x < xn; ++x)
 		{
-			float yy = y + x*k;
-			sum += p[(int)yy*xn + x];
+			uint32_t yy = (float)y + (float)x*k;
+			if (yy < 0){continue;}
+			if (yy >= yn){continue;}
+			ASSERT (yy >= 0);
+			ASSERT (yy < yn);
+			uint32_t index = yy*xn + x;
+			ASSERT (index < xn*yn);
+			sum += p[index];
 		}
 		//p[y*xn+0] = sum * (1.0f / (float)xn);
 		float val = sum;
 		q[y] = val;
-		float yy = (float)y + ((float)xn-1.0f)*k;
-		yy = CLAMP (yy, 0, yn);
+		//float yy = (float)y + ((float)xn-1.0f)*k;
+		//yy = CLAMP (yy, 0, yn);
 		//q[(int)yy] = val;
 	}
 }
@@ -311,31 +317,28 @@ void find_pattern (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
 
 void find_pattern2 (float q[], uint32_t qn, uint32_t g[], uint32_t gn, uint32_t r)
 {
-	float p[15] = {1, 1, 0,-1,-1,-1, 1, 2, 1,-1,-1,-1, 0, 1, 1};
-	r=15;
 	for (uint32_t gi = 0; gi < gn; ++gi)
 	{
-		float max = 0.0f;
-		uint32_t imax = 0;
-		for (uint32_t i = (r/2); i < qn-(r/2); ++i)
+		float qmax = 0.0f;
+		uint32_t qimax = 0;
+		for (uint32_t qi = 0; qi < qn; ++qi)
 		{
-			float sum = 0.0f;
-			for (uint32_t j = 0; j < r; ++j)
+			if (qmax < q[qi])
 			{
-				sum += q[i]*p[j];
-			}
-			if (max < sum)
-			{
-				max = sum;
-				imax = i;
-				q[imax-1] = 0.0f;
-				q[imax] = 0.0f;
-				q[imax+1] = 0.0f;
+				qmax = q[qi];
+				qimax = qi;
 			}
 		}
-		g[gi] = imax;
+		g[gi] = qimax;
+		uint32_t qi0 = r <= qimax ? (qimax-r) : 0;
+		uint32_t qi1 = MIN (qimax+r, qn);
+		for (uint32_t qi = qi0; qi < qi1; ++qi)
+		{
+			q[qi] = 0.0f;
+		}
 	}
 }
+
 
 
 /**
@@ -345,7 +348,7 @@ void find_pattern2 (float q[], uint32_t qn, uint32_t g[], uint32_t gn, uint32_t 
  * @param[in]  w    Width of the image
  * @param[in]  h    Height of the image
  */
-static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn, float q[], uint32_t g[], uint32_t m)
+static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn, float q[], uint32_t g[], uint32_t m, float k)
 {
 	for (uint32_t i = 0; i < xn*yn; ++i)
 	{
@@ -372,6 +375,24 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 			img[g[i]*xn+1] = RGBA (0x00, 0x00, 0xFF, 0xFF);
 		}
 	}
+
+
+	for (uint32_t y = 10; y < 11; ++y)
+	{
+		for (uint32_t x = 0; x < xn; ++x)
+		{
+			uint32_t yy = (float)y + (float)x*k;
+			if (yy < 0){continue;}
+			if (yy >= yn){continue;}
+			ASSERT (yy >= 0);
+			ASSERT (yy < yn);
+			uint32_t index = yy*xn + x;
+			ASSERT (index < xn*yn);
+			img[index] = RGBA (0xF0, 0xF0, 0x00, 0xFF);
+		}
+	}
+
+
 }
 
 
@@ -436,14 +457,15 @@ void show (const char * filename, nng_socket socks[])
 	float k = image_best_line_slope (img3, IMG_XN, IMG_YN, 10);
 	float q[IMG_YN] = {0.0f};
 	float q1[IMG_YN] = {0.0f};
-	image_linesum (img3, IMG_XN, IMG_YN, 10, k, q);
+	image_linesum (img3, IMG_XN, IMG_YN, k, q);
 	vf32_remove_low_values (q, IMG_YN);
 	//image_peaks (q, IMG_YN, u);
 	uint32_t g[4] = {UINT32_MAX};
 	vf32_convolution1d (q, IMG_YN, q1);
 	//find_pattern (q, IMG_YN, g, 4);
+	find_pattern2 (q1, IMG_YN, g, 2, 16);
 	//visual (pix_rgba, pix1, IMG_XN, IMG_YN);
-	image_visual (imgv, img1, IMG_XN, IMG_YN, q1, g, 4);
+	image_visual (imgv, img1, IMG_XN, IMG_YN, q1, g, 2, k);
 	//pix_rgba[105*IMG_XN + 12] |= RGBA(0x00, 0x66, 0x00, 0x00);
 	//pix_rgba[0*IMG_XN + 1] |= RGBA(0x00, 0xFF, 0x00, 0xFF);
 	//pix_rgba[2*IMG_XN + 0] |= RGBA(0x00, 0xFF, 0xff, 0xFF);
@@ -556,7 +578,7 @@ int main (int argc, char const * argv[])
 	//show ("14_13_55_22538.txt", socks);
 	//show ("14_13_53_20565.txt", socks);
 
-
+#if 1
 	FILE * f = popen ("ls", "r");
 	ASSERT (f);
 	char buf[200] = {'\0'};
@@ -586,6 +608,7 @@ int main (int argc, char const * argv[])
 	}
 exit_while:
 	pclose (f);
+#endif
 
 	//show ("14_13_57_24254.txt", socks);
 	nng_close (socks[MAIN_NNGSOCK_POINTCLOUD_POS]);
