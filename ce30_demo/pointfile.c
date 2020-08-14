@@ -269,12 +269,12 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 	{
 		for (uint32_t x = 0; x < xn; ++x)
 		{
-			uint32_t yy = (float)y + (float)x*k;
-			if (yy < 0){continue;}
-			if (yy >= yn){continue;}
+			float yy = (float)y + (float)x*k;
+			if (yy < 0.0f){continue;}
+			if (yy >= (float)yn){continue;}
 			ASSERT (yy >= 0);
-			ASSERT (yy < yn);
-			uint32_t index = yy*xn + x;
+			ASSERT (yy < (float)yn);
+			uint32_t index = (uint32_t)yy * xn + x;
 			ASSERT (index < xn*yn);
 			img[index] = RGBA (0xF0, 0xF0, 0x00, 0xFF);
 		}
@@ -347,13 +347,17 @@ void show (const char * filename, nng_socket socks[])
 	float q1[IMG_YN] = {0.0f};
 	vf32_project_2d_to_1d (img3, IMG_XN, IMG_YN, k, q);
 	vf32_remove_low_values (q, IMG_YN);
-	//image_peaks (q, IMG_YN, u);
+
+	//Amplify skitrack pattern in the 1d array:
+	float skitrack_kernel1d[13] = {1.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 2.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f};
+	vf32_convolution1d (q, IMG_YN, q1, skitrack_kernel1d, countof (skitrack_kernel1d));
+
+
+
 	uint32_t g[4] = {UINT32_MAX};
-	vf32_convolution1d (q, IMG_YN, q1);
-	//find_pattern (q, IMG_YN, g, 4);
 	vf32_find_peaks (q1, IMG_YN, g, 2, 16);
-	//visual (pix_rgba, pix1, IMG_XN, IMG_YN);
 	image_visual (imgv, img1, IMG_XN, IMG_YN, q1, g, 2, k);
+
 	//pix_rgba[105*IMG_XN + 12] |= RGBA(0x00, 0x66, 0x00, 0x00);
 	//pix_rgba[0*IMG_XN + 1] |= RGBA(0x00, 0xFF, 0x00, 0xFF);
 	//pix_rgba[2*IMG_XN + 0] |= RGBA(0x00, 0xFF, 0xff, 0xFF);
