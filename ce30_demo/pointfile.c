@@ -49,28 +49,7 @@ void point_select (uint32_t pointcol[LIDAR_WH], int x, int y, uint32_t color)
 }
 
 
-void point_mean (float x[], uint32_t ldx, uint32_t n, float mean[3])
-{
-	//3 dimensions:
-	uint32_t const dim = 3;
-	memset (mean, 0, sizeof (float)*dim);
-	//Calculate the (mean) coordinate from (v):
-	vf32_addv (dim, mean, 0, mean, 0, x, ldx, n);
-	vsf32_mul (dim, mean, mean, 1.0f / (float)n);
-	//Move all (v) points to origin using coordinate (mean):
-	vf32_subv (dim, x, ldx, x, ldx, mean, 0, n);
-}
 
-
-void point_covariance (float v[], uint32_t v_stride, uint32_t n, float c[3*3])
-{
-	//3 dimensions:
-	uint32_t const dim = 3;
-	//Calculate the covariance matrix (c) from (v):
-	memset (c, 0, sizeof (float)*dim*dim);
-	m3f32_symmetric_xxt (3, c, 3, v, v_stride, n);
-	vsf32_mul (dim*dim, c, c, 1.0f / ((float)n - 1.0f));
-}
 
 
 /**
@@ -209,71 +188,6 @@ void image_convolution1 (float pix2[], float const pix[], int32_t xn, int32_t yn
 }
 
 
-float image_best_line_slope (float const p[], uint32_t xn, uint32_t yn, uint32_t yp)
-{
-	float highscore = 0.0f;
-	float k1 = 0.0f;
-	float const delta = 0.1f;
-	for (float k = -1.0f; k < 1.0f; k += delta)
-	{
-		float score = 0.0f;
-		for (uint32_t y = yp; y < yn-yp; ++y)
-		{
-			float sum = 0.0f;
-			for (uint32_t x = 0; x < xn; ++x)
-			{
-				//skew in the y-direction by (k) amount:
-				float yy = y + x*k;
-				if (yy < 0.0f || yy >= yn)
-				{
-					continue;
-				}
-				ASSERT (yy >= 0.0f);
-				ASSERT (yy < (float)yn);
-				//Sum of noisy pixel will become close to zero:
-				//Sum of similiar pixel will become large positive or negative value:
-				sum += p[(int)yy*xn + x];
-			}
-			score += sum*sum;
-		}
-		if (score > highscore)
-		{
-			highscore = score;
-			k1 = k;
-		}
-		printf ("sum:  %+f : %f\n", k, score);
-	}
-	printf ("best: %+f : %f\n", k1, highscore);
-	return k1;
-}
-
-
-void image_linesum (float p[], uint32_t xn, uint32_t yn, float k, float q[])
-{
-	for (uint32_t y = 0; y < yn; ++y)
-	{
-		float sum = 0.0f;
-		for (uint32_t x = 0; x < xn; ++x)
-		{
-			uint32_t yy = (float)y + (float)x*k;
-			if (yy < 0){continue;}
-			if (yy >= yn){continue;}
-			ASSERT (yy >= 0);
-			ASSERT (yy < yn);
-			uint32_t index = yy*xn + x;
-			ASSERT (index < xn*yn);
-			sum += p[index];
-		}
-		//p[y*xn+0] = sum * (1.0f / (float)xn);
-		float val = sum;
-		q[y] = val;
-		//float yy = (float)y + ((float)xn-1.0f)*k;
-		//yy = CLAMP (yy, 0, yn);
-		//q[(int)yy] = val;
-	}
-}
-
-
 void find_pattern (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
 {
 	uint32_t gi = 0;
@@ -313,32 +227,6 @@ void find_pattern (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
 		gi++;
 	}
 }
-
-
-void find_pattern2 (float q[], uint32_t qn, uint32_t g[], uint32_t gn, uint32_t r)
-{
-	for (uint32_t gi = 0; gi < gn; ++gi)
-	{
-		float qmax = 0.0f;
-		uint32_t qimax = 0;
-		for (uint32_t qi = 0; qi < qn; ++qi)
-		{
-			if (qmax < q[qi])
-			{
-				qmax = q[qi];
-				qimax = qi;
-			}
-		}
-		g[gi] = qimax;
-		uint32_t qi0 = r <= qimax ? (qimax-r) : 0;
-		uint32_t qi1 = MIN (qimax+r, qn);
-		for (uint32_t qi = qi0; qi < qi1; ++qi)
-		{
-			q[qi] = 0.0f;
-		}
-	}
-}
-
 
 
 /**
@@ -427,11 +315,11 @@ void show (const char * filename, nng_socket socks[])
 	//The algorihtm starts here:
 	//(Raw points) -> (filter) -> (PCA) -> (Proj2D) -> (2D Convolution)
 	point_filter (point_pos1, POINT_STRIDE, point_pos1, POINT_STRIDE, &point_pos1_count, 3, 1.0f);
-	point_mean (point_pos1, POINT_STRIDE, point_pos1_count, pc_mean);
-	point_covariance ((float*)point_pos1, POINT_STRIDE, point_pos1_count, c);
+	vf32_move_center_to_zero (DIMENSION (3), point_pos1, POINT_STRIDE, point_pos1_count, pc_mean);
+	mf32_get_covariance (DIMENSION (3), (float*)point_pos1, POINT_STRIDE, point_pos1_count, c);
 	//Calculate the eigen vectors (c) and eigen values (w) from covariance matrix (c):
 	//https://software.intel.com/sites/products/documentation/doclib/mkl_sa/11/mkl_lapack_examples/dsyev.htm
-	LAPACKE_ssyev (LAPACK_COL_MAJOR, 'V', 'U', 3, c, 3, w);
+	LAPACKE_ssyev (LAPACK_COL_MAJOR, 'V', 'U', DIMENSION (3), c, DIMENSION (3), w);
 	//LAPACK_ssyev ();
 	printf ("eigen vector:\n"); m3f32_print (c, stdout);
 	printf ("eigen value: %f %f %f\n", w[0], w[1], w[2]);
@@ -454,16 +342,16 @@ void show (const char * filename, nng_socket socks[])
 	image_convolution1 (img3, img2, IMG_XN, IMG_YN);
 
 
-	float k = image_best_line_slope (img3, IMG_XN, IMG_YN, 10);
+	float k = vf32_most_common_line (img3, IMG_XN, IMG_YN, 10);
 	float q[IMG_YN] = {0.0f};
 	float q1[IMG_YN] = {0.0f};
-	image_linesum (img3, IMG_XN, IMG_YN, k, q);
+	vf32_project_2d_to_1d (img3, IMG_XN, IMG_YN, k, q);
 	vf32_remove_low_values (q, IMG_YN);
 	//image_peaks (q, IMG_YN, u);
 	uint32_t g[4] = {UINT32_MAX};
 	vf32_convolution1d (q, IMG_YN, q1);
 	//find_pattern (q, IMG_YN, g, 4);
-	find_pattern2 (q1, IMG_YN, g, 2, 16);
+	vf32_find_peaks (q1, IMG_YN, g, 2, 16);
 	//visual (pix_rgba, pix1, IMG_XN, IMG_YN);
 	image_visual (imgv, img1, IMG_XN, IMG_YN, q1, g, 2, k);
 	//pix_rgba[105*IMG_XN + 12] |= RGBA(0x00, 0x66, 0x00, 0x00);
