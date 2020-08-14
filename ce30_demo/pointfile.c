@@ -31,6 +31,7 @@
 #include "csc/csc_v3f32.h"
 #include "csc/csc_v4f32.h"
 #include "csc/csc_qf32.h"
+#include "csc/csc_filecopy.h"
 
 #include "calculation.h"
 
@@ -144,34 +145,6 @@ void point_project (float pix[], float imgf[], uint32_t xn, uint32_t yn, float v
 }
 
 
-void image_convolution (float pix2[], float const pix[], int32_t xn, int32_t yn, float k[], int32_t kxn, int32_t kyn)
-{
-	int32_t kxn0 = kxn / 2;
-	int32_t kyn0 = kyn / 2;
-	//printf ("kxn0 %i\n", kxn0);
-	//printf ("kyn0 %i\n", kyn0);
-	for (int32_t y = kyn0; y < (yn-kyn0); ++y)
-	{
-		for (int32_t x = kxn0; x < (xn-kxn0); ++x)
-		{
-			float sum = 0.0f;
-			for (int32_t ky = 0; ky < kyn; ++ky)
-			{
-				for (int32_t kx = 0; kx < kxn; ++kx)
-				{
-					int32_t xx = x + kx - kxn0;
-					int32_t yy = y + ky - kyn0;
-					sum += pix[yy * xn + xx] * k[ky * kxn + kx];
-				}
-			}
-			pix2[y * xn + x] = sum;
-			//pix2[y * xn + x] = pix[y * xn + x];
-		}
-	}
-}
-
-
-
 void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, int32_t yn)
 {
 	///*
@@ -216,7 +189,7 @@ void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, in
 	};
 	*/
 	vf32_normalize (kxn*kyn, kernel, kernel);
-	image_convolution (pix2, pix, xn, yn, kernel, kxn, kyn);
+	vf32_convolution2d (pix2, pix, xn, yn, kernel, kxn, kyn);
 }
 
 
@@ -232,7 +205,7 @@ void image_convolution1 (float pix2[], float const pix[], int32_t xn, int32_t yn
 	 1.0f, 1.0f, 1.0f,
 	};
 	vf32_normalize (kxn*kyn, kernel, kernel);
-	image_convolution (pix2, pix, xn, yn, kernel, kxn, kyn);
+	vf32_convolution2d (pix2, pix, xn, yn, kernel, kxn, kyn);
 }
 
 
@@ -251,6 +224,12 @@ float image_best_line_slope (float const p[], uint32_t xn, uint32_t yn, uint32_t
 			{
 				//skew in the y-direction by (k) amount:
 				float yy = y + x*k;
+				if (yy < 0.0f || yy >= yn)
+				{
+					continue;
+				}
+				ASSERT (yy >= 0.0f);
+				ASSERT (yy < (float)yn);
 				//Sum of noisy pixel will become close to zero:
 				//Sum of similiar pixel will become large positive or negative value:
 				sum += p[(int)yy*xn + x];
@@ -269,15 +248,7 @@ float image_best_line_slope (float const p[], uint32_t xn, uint32_t yn, uint32_t
 }
 
 
-/**
- * @brief
- * @param p
- * @param xn
- * @param yn
- * @param yp
- * @param k
- */
-void image_visual_line (float p[], uint32_t xn, uint32_t yn, uint32_t yp, float k, float q[])
+void image_linesum (float p[], uint32_t xn, uint32_t yn, uint32_t yp, float k, float q[])
 {
 	for (uint32_t y = yp; y < yn-yp; ++y)
 	{
@@ -297,102 +268,6 @@ void image_visual_line (float p[], uint32_t xn, uint32_t yn, uint32_t yp, float 
 }
 
 
-void image_peaks (float const q[], uint32_t n, float u[])
-{
-	uint32_t kn = 13;
-	uint32_t kn0 = kn / 2;
-	float k[13] = {1.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 2.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f};
-	vf32_normalize (kn, k, k);
-
-	for (uint32_t i = kn0; i < n-kn0; ++i)
-	{
-		float sum = 0.0f;
-		for (uint32_t j = 0; j < kn; ++j)
-		{
-			sum += q[i - kn0 + j] * k[j];
-		}
-		u[i] = sum;
-	}
-}
-
-
-uint32_t search_positive (float q[], uint32_t qn, uint32_t * qi, uint32_t count)
-{
-	uint32_t n = 0;
-	while (count--)
-	{
-		if ((*qi) >= qn){break;}
-		if (q[(*qi)] <= 0.0f){break;}
-		(*qi)++;
-		n++;
-	}
-	return n;
-}
-
-uint32_t search_negative (float q[], uint32_t qn, uint32_t * qi, uint32_t count)
-{
-	uint32_t n = 0;
-	while (count--)
-	{
-		if ((*qi) >= qn){break;}
-		if (q[(*qi)] >= 0.0f){break;}
-		(*qi)++;
-		n++;
-	}
-	return n;
-}
-
-
-void filter (float q[], uint32_t qn)
-{
-	float pos = 0.0f;
-	float neg = 0.0f;
-	float pos_n = 0;
-	float neg_n = 0;
-	for (uint32_t i = 0; i < qn; ++i)
-	{
-		if (q[i] > 0.0f)
-		{
-			pos += q[i];
-			pos_n += 1.0f;
-		}
-		else if (q[i] < 0.0f)
-		{
-			neg += q[i];
-			neg_n += 1.0f;
-		}
-	}
-	pos /= pos_n;
-	neg /= neg_n;
-	for (uint32_t i = 0; i < qn; ++i)
-	{
-		if ((q[i] > 0.0f) && (q[i] < pos))
-		{
-			q[i] = 0.0f;
-		}
-		if ((q[i] < 0.0f) && (q[i] > neg))
-		{
-			q[i] = 0.0f;
-		}
-	}
-}
-
-
-
-uint32_t skip_zero (float q[], uint32_t qn, uint32_t * qi)
-{
-	uint32_t n = 0;
-	while (1)
-	{
-		if ((*qi) >= qn){break;}
-		if (q[(*qi)] != 0.0f){break;}
-		(*qi)++;
-		n++;
-	}
-	return n;
-}
-
-
 void find_pattern (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
 {
 	uint32_t gi = 0;
@@ -406,25 +281,25 @@ void find_pattern (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
 
 		uint32_t qi0 = qi;
 
-		skip_zero (q, qn, &qi0);
-		n = search_positive (q, qn, &qi0, 100);
+		vf32_skip_zero (q, qn, &qi0);
+		n = vf32_amount_positive (q, qn, &qi0, 100);
 		if (n < 1) {qi++; continue;};
 
-		skip_zero (q, qn, &qi0);
-		n = search_negative (q, qn, &qi0, 100);
+		//skip_zero (q, qn, &qi0);
+		n = vf32_amount_negative (q, qn, &qi0, 100);
 		if (n < 1 || n > 4) {qi++; continue;};
 
-		skip_zero (q, qn, &qi0);
-		n = search_positive (q, qn, &qi0, 100);
+		//skip_zero (q, qn, &qi0);
+		n = vf32_amount_positive (q, qn, &qi0, 100);
 		if (n < 1 || n > 4) {qi++; continue;}
-		c = qi0 - (n/2);
+		c = qi0 - (n/2) - 1;
 
-		skip_zero (q, qn, &qi0);
-		n = search_negative (q, qn, &qi0, 100);
+		//skip_zero (q, qn, &qi0);
+		n = vf32_amount_negative (q, qn, &qi0, 100);
 		if (n < 1 || n > 4) {qi++; continue;};
 
-		skip_zero (q, qn, &qi0);
-		n = search_positive (q, qn, &qi0, 100);
+		//skip_zero (q, qn, &qi0);
+		n = vf32_amount_positive (q, qn, &qi0, 100);
 		if (n < 1) {qi++; continue;};
 
 		qi = qi0 + 10;
@@ -432,7 +307,6 @@ void find_pattern (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
 		gi++;
 	}
 }
-
 
 
 void find_pattern2 (float q[], uint32_t qn, uint32_t g[], uint32_t gn, uint32_t r)
@@ -555,20 +429,21 @@ void show (const char * filename, nng_socket socks[])
 	//cblas_sgemm (CblasColMajor, CblasTrans, CblasNoTrans, 4, point_pos1_count, 4, 1.0f, rotation, 4, point_pos1, 4, 0.0f, point_pos1, 4);
 	point_project (img1, imgf, IMG_XN, IMG_YN, point_pos1, POINT_STRIDE, point_pos1_count);
 	image_skitrack_convolution (img2, img1, IMG_XN, IMG_YN);
-	filter (img2, IMG_XN*IMG_YN);
+	vf32_remove_low_values (img2, IMG_XN*IMG_YN);
 	image_convolution1 (img3, img2, IMG_XN, IMG_YN);
-	//filter (img3, IMG_XN*IMG_YN);
 
 
 	float k = image_best_line_slope (img3, IMG_XN, IMG_YN, 10);
 	float q[IMG_YN] = {0.0f};
-	image_visual_line (img3, IMG_XN, IMG_YN, 10, k, q);
-	filter (q, IMG_YN);
+	float q1[IMG_YN] = {0.0f};
+	image_linesum (img3, IMG_XN, IMG_YN, 10, k, q);
+	vf32_remove_low_values (q, IMG_YN);
 	//image_peaks (q, IMG_YN, u);
 	uint32_t g[4] = {UINT32_MAX};
-	find_pattern (q, IMG_YN, g, 4);
+	vf32_convolution1d (q, IMG_YN, q1);
+	//find_pattern (q, IMG_YN, g, 4);
 	//visual (pix_rgba, pix1, IMG_XN, IMG_YN);
-	image_visual (imgv, img1, IMG_XN, IMG_YN, q, g, 4);
+	image_visual (imgv, img1, IMG_XN, IMG_YN, q1, g, 4);
 	//pix_rgba[105*IMG_XN + 12] |= RGBA(0x00, 0x66, 0x00, 0x00);
 	//pix_rgba[0*IMG_XN + 1] |= RGBA(0x00, 0xFF, 0x00, 0xFF);
 	//pix_rgba[2*IMG_XN + 0] |= RGBA(0x00, 0xFF, 0xff, 0xFF);
@@ -661,9 +536,10 @@ void show (const char * filename, nng_socket socks[])
 
 
 
-
 int main (int argc, char const * argv[])
 {
+	ASSERT (argc);
+	ASSERT (argv);
 	csc_crossos_enable_ansi_color();
 
 	nng_socket socks[MAIN_NNGSOCK_COUNT] = {{0}};
@@ -674,20 +550,43 @@ int main (int argc, char const * argv[])
 	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_POS,       "tcp://localhost:9006");
 	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_COL,       "tcp://localhost:9007");
 
-	chdir ("../ce30_demo/txtpoints");
-	///*
+	chdir ("../ce30_demo/txtpoints2");
+
+	//show ("14_13_57_24145.txt", socks);
+	//show ("14_13_55_22538.txt", socks);
+	//show ("14_13_53_20565.txt", socks);
+
+
 	FILE * f = popen ("ls", "r");
 	ASSERT (f);
 	char buf[200] = {'\0'};
-	while (fgets (buf, sizeof (buf), f) != NULL)
+	while (1)
 	{
-		buf[strcspn(buf, "\r\n")] = 0;
-		printf("OUTPUT: (%s)\n", buf);
-		show (buf, socks);
-		sleep (1);
+		int c;
+		do
+		{
+			c = getchar();
+		}
+		while (c == '\n');
+		switch (c)
+		{
+		case 'q':
+			goto exit_while;
+			break;
+		case 'n':
+			if (fgets (buf, sizeof (buf), f) == NULL) {goto exit_while;};
+			buf[strcspn(buf, "\r\n")] = 0;
+			printf ("Examining LiDAR point file: %s\n", buf);
+			show (buf, socks);
+			break;
+		case 'c':
+			//copy_file (buf, "../txtpoints2");
+			break;
+		}
 	}
+exit_while:
 	pclose (f);
-	//*/
+
 	//show ("14_13_57_24254.txt", socks);
 	nng_close (socks[MAIN_NNGSOCK_POINTCLOUD_POS]);
 	nng_close (socks[MAIN_NNGSOCK_POINTCLOUD_COL]);
