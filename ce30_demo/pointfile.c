@@ -284,24 +284,48 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 }
 
 
+
+
+/*
+	 1: Read filename                   : (Filename) -> (text 3D points)
+	 2: Convert text points to f32      : (text 3D points) -> (3D points)
+	 3: Filter out bad points           : (3D points) -> (3D points)
+	 4: (PCA) Move center to origin     : (3D points) -> (3D points)
+	 5: (PCA) Get covariance matrix     : (3D points) -> (3x3 matrix)
+	 6: (PCA) Get eigen vectors         : (3x3 matrix) -> (3x3 rotation matrix)
+	 7: (PCA) Rectify points            : ((3x3 rotation matrix), (3D points)) -> (3D points)
+	 8: Project 3D points to 2D image   : (3D points)) -> (2D image)
+	 9: (Conv) Amplify skitrack         : (2D image) -> (2D image)
+	10: Remove low values               : (2D image) -> (2D image)
+	11: Smooth                          : (2D image) -> (2D image)
+	12: Find most common line direction : (2D image) -> (direction)
+	13: Project 2D image to 1D image    : ((2D image), (direction)) -> (1D image)
+	14: Remove low values               : (1D image) -> (1D image)
+	15: (Conv) Amplify 1D skitracks     : (1D image) -> (1D image)
+	16: Find all peaks                  : (1D image) -> ((indices), (strength))
+	17: Output of skitrack position     : ((indices), (strength))
+*/
 void show (const char * filename, nng_socket socks[])
 {
-	char const * txtpoint = csc_malloc_file (filename);
+
+
+
 	float point_pos1[LIDAR_WH*POINT_STRIDE] = {0.0f};
 	uint32_t point_pos1_count = LIDAR_WH;
-	points_read (txtpoint, point_pos1, &point_pos1_count);
-	free ((void*)txtpoint);
-	//points_print (point, n);
 
+	//The color of each point:
+	//This is only used for visualization:
 	uint32_t pointcol[LIDAR_WH] = {0};
 	for (int i = 0; i < LIDAR_WH; ++i) {pointcol[i] = RGBA (0xFF, 0xFF, 0xFF, 0xFF);}
 
-	/*
-	for (uint32_t i = 0; i < point_pos1_count; ++i)
+
 	{
-		printf ("%f %f %f\n", point_pos1[i*POINTS_DIM + 0], point_pos1[i*POINTS_DIM + 1], point_pos1[i*POINTS_DIM + 2]);
+		//Read all points from the filename:
+		char const * txtpoint = csc_malloc_file (filename);
+		points_read (txtpoint, point_pos1, &point_pos1_count);
+		free ((void*)txtpoint);
 	}
-	*/
+
 
 	float img1[IMG_XN*IMG_YN] = {0.0f};//Projected points
 	float img2[IMG_XN*IMG_YN] = {0.0f};//Convolution from img1
@@ -312,23 +336,31 @@ void show (const char * filename, nng_socket socks[])
 	float w[3];//Eigen values
 	float pc_mean[3];
 
-	//The algorihtm starts here:
-	//(Raw points) -> (filter) -> (PCA) -> (Proj2D) -> (2D Convolution)
+	//Remove bad points:
 	point_filter (point_pos1, POINT_STRIDE, point_pos1, POINT_STRIDE, &point_pos1_count, 3, 1.0f);
+
+	//Move the center of all points to origin:
 	vf32_move_center_to_zero (DIMENSION (3), point_pos1, POINT_STRIDE, point_pos1_count, pc_mean);
+
+	//Calculate the covariance matrix of the points which can be used to get the orientation of the points:
 	mf32_get_covariance (DIMENSION (3), (float*)point_pos1, POINT_STRIDE, point_pos1_count, c);
-	//Calculate the eigen vectors (c) and eigen values (w) from covariance matrix (c):
+
+	//Calculate the eigen vectors (c) and eigen values (w) from covariance matrix (c) which will get the orientation of the points:
 	//https://software.intel.com/sites/products/documentation/doclib/mkl_sa/11/mkl_lapack_examples/dsyev.htm
 	LAPACKE_ssyev (LAPACK_COL_MAJOR, 'V', 'U', DIMENSION (3), c, DIMENSION (3), w);
 	//LAPACK_ssyev ();
 	printf ("eigen vector:\n"); m3f32_print (c, stdout);
 	printf ("eigen value: %f %f %f\n", w[0], w[1], w[2]);
+
+	//Rectify every point by this rotation matrix which is the current orientation of the points:
 	float rotation[3*3] =
 	{
 	c[3], c[6], c[0],
 	c[4], c[7], c[1],
 	c[5], c[8], c[2]
 	};
+
+
 	//TODO: Do a matrix matrix multiplication instead of matrix vector multiplication:
 	for (uint32_t i = 0; i < point_pos1_count; ++i)
 	{
@@ -336,27 +368,44 @@ void show (const char * filename, nng_socket socks[])
 		mv3f32_mul (v, rotation, v);
 	}
 	//cblas_sgemm (CblasColMajor, CblasTrans, CblasNoTrans, 4, point_pos1_count, 4, 1.0f, rotation, 4, point_pos1, 4, 0.0f, point_pos1, 4);
+
+
+	//Project 3D points to a 2D image:
+	//The center of the image is put ontop of the origin where all points are:
 	point_project (img1, imgf, IMG_XN, IMG_YN, point_pos1, POINT_STRIDE, point_pos1_count);
+
+
+	//Amplify skitrack pattern in the 2D image:
 	image_skitrack_convolution (img2, img1, IMG_XN, IMG_YN);
 	vf32_remove_low_values (img2, IMG_XN*IMG_YN);
 	image_convolution1 (img3, img2, IMG_XN, IMG_YN);
 
 
+	//Find the most common lines direction in the image which hopefully matches the direction of the skitrack:
 	float k = vf32_most_common_line (img3, IMG_XN, IMG_YN, 10);
+
+
+	//Project 2D image to a 1D image in the the most common direction (k):
 	float q[IMG_YN] = {0.0f};
 	float q1[IMG_YN] = {0.0f};
 	vf32_project_2d_to_1d (img3, IMG_XN, IMG_YN, k, q);
 	vf32_remove_low_values (q, IMG_YN);
 
-	//Amplify skitrack pattern in the 1d array:
+
+	//Amplify skitrack pattern in the 1D image:
 	float skitrack_kernel1d[13] = {1.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 2.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f};
 	vf32_convolution1d (q, IMG_YN, q1, skitrack_kernel1d, countof (skitrack_kernel1d));
 
 
-
+	//Find the peaks which should be where the skitrack is positioned:
 	uint32_t g[4] = {UINT32_MAX};
 	vf32_find_peaks (q1, IMG_YN, g, 2, 16);
+
+
+	//Visualize the skitrack and more information:
 	image_visual (imgv, img1, IMG_XN, IMG_YN, q1, g, 2, k);
+
+
 
 	//pix_rgba[105*IMG_XN + 12] |= RGBA(0x00, 0x66, 0x00, 0x00);
 	//pix_rgba[0*IMG_XN + 1] |= RGBA(0x00, 0xFF, 0x00, 0xFF);
