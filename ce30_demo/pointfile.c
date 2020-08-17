@@ -126,7 +126,7 @@ void point_project (float pix[], float imgf[], uint32_t xn, uint32_t yn, float v
 
 void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, int32_t yn)
 {
-	///*
+#if 1
 	int32_t kxn = 3;
 	int32_t kyn = 5;
 
@@ -138,6 +138,24 @@ void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, in
 	  1.0f,  2.0f,  1.0f, //Skitrack dipping
 	 -2.0f, -4.0f, -2.0f, //Skitrack edge
 	};
+#endif
+
+#if 0
+	int32_t kxn = 3;
+	int32_t kyn = 7;
+
+	float kernel[3*7] =
+	{
+	 -2.0f, -6.0f, -2.0f, //Skitrack edge
+	 -1.0f, -3.0f, -1.0f, //Skitrack edge
+	  1.0f,  4.0f,  1.0f, //Skitrack dipping
+	  3.0f,  6.0f,  3.0f, //Skitrack dipping
+	  1.0f,  4.0f,  1.0f, //Skitrack dipping
+	 -1.0f, -3.0f, -1.0f, //Skitrack edge
+	 -2.0f, -6.0f, -2.0f, //Skitrack edge
+	};
+#endif
+
 	//*/
 	/*
 	float kernel1[3*5] =
@@ -236,7 +254,7 @@ void find_pattern (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
  * @param[in]  w    Width of the image
  * @param[in]  h    Height of the image
  */
-static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn, float q[], uint32_t g[], uint32_t m, float k)
+static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn, float q1[], float q2[], uint32_t g[], uint32_t m, float k)
 {
 	for (uint32_t i = 0; i < xn*yn; ++i)
 	{
@@ -248,19 +266,30 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 		img[i] = RGBA (r, g, 0x00, 0xFF);
 		//pix_rgba[i] = RGBA (pix1[i] > 0.4f ? 0xFF : 0x00, 0x00, 0x00, 0xFF);
 	}
+
+
 	for (uint32_t y = 0; y < yn; ++y)
 	{
-		uint8_t r = CLAMP ((-q[y])*300.0f, 0.0f, 255.0f);
-		uint8_t g = CLAMP ((q[y])*300.0f, 0.0f, 255.0f);
-		img[y*xn+0] = RGBA (r, g, 0x00, 0xFF);
+		uint8_t r = CLAMP ((-q1[y])*300.0f, 0.0f, 255.0f);
+		uint8_t g = CLAMP ((q1[y])*300.0f, 0.0f, 255.0f);
+		img[y*xn+1] = RGBA (r, g, 0x22, 0xFF);
 		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
 	}
+
+	for (uint32_t y = 0; y < yn; ++y)
+	{
+		uint8_t r = CLAMP ((-q2[y])*300.0f, 0.0f, 255.0f);
+		uint8_t g = CLAMP ((q2[y])*300.0f, 0.0f, 255.0f);
+		img[y*xn+0] = RGBA (r, g, 0x22, 0xFF);
+		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
+	}
+
 
 	for (uint32_t i = 0; i < m; ++i)
 	{
 		if (g[i] < yn)
 		{
-			img[g[i]*xn+1] = RGBA (0x00, 0x00, 0xFF, 0xFF);
+			img[g[i]*xn+2] = RGBA (0x00, 0x00, 0xFF, 0xFF);
 		}
 	}
 
@@ -297,36 +326,18 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 	 8: Project 3D points to 2D image   : (3D points)) -> (2D image)
 	 9: (Conv) Amplify skitrack         : (2D image) -> (2D image)
 	10: Remove low values               : (2D image) -> (2D image)
-	11: Smooth                          : (2D image) -> (2D image)
+	11: (Conv) Smooth                   : (2D image) -> (2D image)
 	12: Find most common line direction : (2D image) -> (direction)
 	13: Project 2D image to 1D image    : ((2D image), (direction)) -> (1D image)
 	14: Remove low values               : (1D image) -> (1D image)
 	15: (Conv) Amplify 1D skitracks     : (1D image) -> (1D image)
-	16: Find all peaks                  : (1D image) -> ((indices), (strength))
-	17: Output of skitrack position     : ((indices), (strength))
+	16: Find all peaks                  : (1D image) -> ((position), (strength))
+	17: Output of skitrack position     : ((position), (strength))
 */
 void show (const char * filename, nng_socket socks[])
 {
-
-
-
 	float point_pos1[LIDAR_WH*POINT_STRIDE] = {0.0f};
 	uint32_t point_pos1_count = LIDAR_WH;
-
-	//The color of each point:
-	//This is only used for visualization:
-	uint32_t pointcol[LIDAR_WH] = {0};
-	for (int i = 0; i < LIDAR_WH; ++i) {pointcol[i] = RGBA (0xFF, 0xFF, 0xFF, 0xFF);}
-
-
-	{
-		//Read all points from the filename:
-		char const * txtpoint = csc_malloc_file (filename);
-		points_read (txtpoint, point_pos1, &point_pos1_count);
-		free ((void*)txtpoint);
-	}
-
-
 	float img1[IMG_XN*IMG_YN] = {0.0f};//Projected points
 	float img2[IMG_XN*IMG_YN] = {0.0f};//Convolution from img1
 	float img3[IMG_XN*IMG_YN] = {0.0f};//Convolution from img2
@@ -335,6 +346,16 @@ void show (const char * filename, nng_socket socks[])
 	float c[3*3];//Covariance matrix first then 3x eigen vectors
 	float w[3];//Eigen values
 	float pc_mean[3];
+	uint32_t pointcol[LIDAR_WH] = {RGBA (0xFF, 0xFF, 0xFF, 0xFF)};//The color of each point. This is only used for visualization.
+
+
+	//Read all points from the filename:
+	if (1)
+	{
+		char const * txtpoint = csc_malloc_file (filename);
+		points_read (txtpoint, point_pos1, &point_pos1_count);
+		free ((void*)txtpoint);
+	}
 
 	//Remove bad points:
 	point_filter (point_pos1, POINT_STRIDE, point_pos1, POINT_STRIDE, &point_pos1_count, 3, 1.0f);
@@ -359,8 +380,6 @@ void show (const char * filename, nng_socket socks[])
 	c[4], c[7], c[1],
 	c[5], c[8], c[2]
 	};
-
-
 	//TODO: Do a matrix matrix multiplication instead of matrix vector multiplication:
 	for (uint32_t i = 0; i < point_pos1_count; ++i)
 	{
@@ -377,33 +396,37 @@ void show (const char * filename, nng_socket socks[])
 
 	//Amplify skitrack pattern in the 2D image:
 	image_skitrack_convolution (img2, img1, IMG_XN, IMG_YN);
-	vf32_remove_low_values (img2, IMG_XN*IMG_YN);
-	image_convolution1 (img3, img2, IMG_XN, IMG_YN);
+	//vf32_remove_low_values (img2, IMG_XN*IMG_YN);
+	//image_convolution1 (img3, img2, IMG_XN, IMG_YN);
+	memcpy (img3, img2, sizeof(img3));
 
 
 	//Find the most common lines direction in the image which hopefully matches the direction of the skitrack:
-	float k = vf32_most_common_line (img3, IMG_XN, IMG_YN, 10);
+	float k = vf32_most_common_line (img3, IMG_XN, IMG_YN, 20);
 
 
 	//Project 2D image to a 1D image in the the most common direction (k):
-	float q[IMG_YN] = {0.0f};
 	float q1[IMG_YN] = {0.0f};
-	vf32_project_2d_to_1d (img3, IMG_XN, IMG_YN, k, q);
-	vf32_remove_low_values (q, IMG_YN);
+	float q2[IMG_YN] = {0.0f};
+	vf32_project_2d_to_1d (img3, IMG_XN, IMG_YN, k, q1);
+	//vf32_remove_low_values (q, IMG_YN);
 
 
 	//Amplify skitrack pattern in the 1D image:
-	float skitrack_kernel1d[13] = {1.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 2.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f};
-	vf32_convolution1d (q, IMG_YN, q1, skitrack_kernel1d, countof (skitrack_kernel1d));
+	float skitrack_kernel1d[] = {-7.0f, -3.0f, 1.0f, 2.0f, 1.0f, -3.0f, -7.0f};
+	vf32_convolution1d (q1, IMG_YN, q2, skitrack_kernel1d, countof (skitrack_kernel1d));
 
 
 	//Find the peaks which should be where the skitrack is positioned:
 	uint32_t g[4] = {UINT32_MAX};
-	vf32_find_peaks (q1, IMG_YN, g, 2, 16);
-
+	{
+		float q[IMG_YN] = {0.0f};
+		memcpy (q, q2, sizeof (q));
+		vf32_find_peaks (q, IMG_YN, g, 2, 16, 20);
+	}
 
 	//Visualize the skitrack and more information:
-	image_visual (imgv, img1, IMG_XN, IMG_YN, q1, g, 2, k);
+	image_visual (imgv, img1, IMG_XN, IMG_YN, q1, q2, g, 2, k);
 
 
 
@@ -480,6 +503,7 @@ void show (const char * filename, nng_socket socks[])
 	};
 
 
+
 	//Send visual information to the graphic server:
 	{
 		int r;
@@ -518,6 +542,12 @@ int main (int argc, char const * argv[])
 	//show ("14_13_57_24145.txt", socks);
 	//show ("14_13_55_22538.txt", socks);
 	//show ("14_13_53_20565.txt", socks);
+	//show ("14_13_52_19801.txt", socks);
+	//show ("14_13_53_20906.txt", socks);
+	//show ("14_13_55_22978.txt", socks);
+	//show ("14_13_58_25517.txt", socks);
+	//show ("14_13_53_20783.txt", socks);
+
 
 #if 1
 	FILE * f = popen ("ls", "r");
