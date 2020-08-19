@@ -40,6 +40,140 @@
 #define IMG_YN 120
 
 
+void vf32_project_2d_to_1d (float p[], uint32_t xn, uint32_t yn, float k, float q[])
+{
+	for (uint32_t y = 0; y < yn; ++y)
+	{
+		float sum = 0.0f;
+		for (uint32_t x = 0; x < xn; ++x)
+		{
+			float yy = (float)y + (float)x*k;
+			if (yy < 0.0f){continue;}
+			if (yy >= (float)yn){continue;}
+			ASSERT (yy >= 0.0f);
+			ASSERT (yy < (float)yn);
+			uint32_t index = (uint32_t)yy*xn + x;
+			ASSERT (index < xn*yn);
+			sum += p[index];
+		}
+		//p[y*xn+0] = sum * (1.0f / (float)xn);
+		float val = sum;
+		q[y] = val;
+		//float yy = (float)y + ((float)xn-1.0f)*k;
+		//yy = CLAMP (yy, 0, yn);
+		//q[(int)yy] = val;
+	}
+}
+
+
+void vf32_project_2d_to_1d_pn (float const p[], uint32_t xn, uint32_t yn, float k, float q[])
+{
+	for (uint32_t y = 0; y < yn; ++y)
+	{
+		float sump = 0.0f;
+		float sumn = 0.0f;
+		for (uint32_t x = 0; x < xn; ++x)
+		{
+			float yy = (float)y + (float)x*k;
+			if (yy < 0.0f){continue;}
+			if (yy >= (float)yn){continue;}
+			ASSERT (yy >= 0.0f);
+			ASSERT (yy < (float)yn);
+			uint32_t index = (uint32_t)yy*xn + x;
+			ASSERT (index < xn*yn);
+			if (p[index] > 0.0f)
+			{
+				sump += 1;
+			}
+			if (p[index] < 0.0f)
+			{
+				sumn += 1;
+			}
+		}
+		//p[y*xn+0] = sum * (1.0f / (float)xn);
+		float val = (sump - sumn) / xn;
+		q[y] = val;
+		//float yy = (float)y + ((float)xn-1.0f)*k;
+		//yy = CLAMP (yy, 0, yn);
+		//q[(int)yy] = val;
+	}
+}
+
+
+
+float vf32_most_common_line (float const p[], uint32_t xn, uint32_t yn, uint32_t yp)
+{
+	float highscore = 0.0f;
+	float k1 = 0.0f;
+	float const delta = 0.1f;
+	for (float k = -1.0f; k < 1.0f; k += delta)
+	{
+		float score = 0.0f;
+		for (uint32_t y = yp; y < yn-yp; ++y)
+		{
+			float sum = 0.0f;
+			for (uint32_t x = 0; x < xn; ++x)
+			{
+				//skew in the y-direction by (k) amount:
+				float yy = y + x*k;
+				if (yy < 0.0f || yy >= yn)
+				{
+					continue;
+				}
+				ASSERT (yy >= 0.0f);
+				ASSERT (yy < (float)yn);
+				uint32_t index = (uint32_t)yy*xn + x;
+				ASSERT (index < xn*yn);
+				//Sum of noisy pixel will become close to zero:
+				//Sum of similiar pixel will become large positive or negative value:
+				//TODO: Do not count undefined pixels:
+				sum += p[index];
+			}
+			score += sum*sum;
+		}
+		if (score > highscore)
+		{
+			highscore = score;
+			k1 = k;
+		}
+		printf ("sum:  %+f : %f\n", k, score);
+	}
+	printf ("best: %+f : %f\n", k1, highscore);
+	return k1;
+}
+
+
+
+float vf32_most_common_line2 (float const p[], uint32_t xn, uint32_t yn, float q[])
+{
+	float max = 0.0f;
+	float k1 = 0.0f;
+	float const delta = 0.1f;
+	for (float k = -1.0f; k < 1.0f; k += delta)
+	{
+		vf32_project_2d_to_1d_pn (p, xn, yn, k, q);
+		float sum = 0.0f;
+		for (uint32_t i = 0; i < yn; ++i)
+		{
+			sum += q[i]*q[i];
+		}
+		if (sum > max)
+		{
+			max = sum;
+			k1 = k;
+		}
+	}
+	printf ("max: %+f : %f\n", k1, max);
+	return k1;
+}
+
+
+
+
+
+
+
+
 void point_select (uint32_t pointcol[LIDAR_WH], int x, int y, uint32_t color)
 {
 	int index = LIDAR_INDEX(x,y);
@@ -47,10 +181,6 @@ void point_select (uint32_t pointcol[LIDAR_WH], int x, int y, uint32_t color)
 	printf ("index %i\n", index);
 	pointcol[index] = color;
 }
-
-
-
-
 
 /**
  * @brief Filter out points that is not good for finding the ground plane
@@ -126,17 +256,50 @@ void point_project (float pix[], float imgf[], uint32_t xn, uint32_t yn, float v
 
 void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, int32_t yn)
 {
-#if 1
+#if 0
 	int32_t kxn = 3;
 	int32_t kyn = 5;
-
 	float kernel[3*5] =
 	{
-	 -2.0f, -4.0f, -2.0f, //Skitrack edge
+	 -2.0f, -5.0f, -2.0f, //Skitrack edge
 	  1.0f,  2.0f,  1.0f, //Skitrack dipping
-	  2.0f,  3.0f,  2.0f, //Skitrack dipping
+	  2.0f,  5.0f,  2.0f, //Skitrack dipping
 	  1.0f,  2.0f,  1.0f, //Skitrack dipping
-	 -2.0f, -4.0f, -2.0f, //Skitrack edge
+	 -2.0f, -5.0f, -2.0f, //Skitrack edge
+	};
+#endif
+
+#if 1
+	int32_t kxn = 1;
+	int32_t kyn = 5;
+	float kernel[1*5] =
+	{
+	-5.0f,
+	2.0f,
+	6.0f,
+	2.0f,
+	-5.0f
+	};
+#endif
+
+#if 0
+	int32_t kxn = 1;
+	int32_t kyn = 13;
+	float kernel[1*13] =
+	{
+	1.0f, //Skitrack dipping
+	 1.0f, //Skitrack dipping
+	 -4.0f, //Skitrack edge
+	 -9.0f, //Skitrack edge
+	 -4.0f, //Skitrack edge
+	  2.0f, //Skitrack dipping
+	  9.0f, //Skitrack dipping
+	  2.0f, //Skitrack dipping
+	 -4.0f, //Skitrack edge
+	 -9.0f, //Skitrack edge
+	 -4.0f, //Skitrack edge
+	 1.0f, //Skitrack dipping
+	1.0f, //Skitrack dipping
 	};
 #endif
 
@@ -270,16 +433,16 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 
 	for (uint32_t y = 0; y < yn; ++y)
 	{
-		uint8_t r = CLAMP ((-q1[y])*300.0f, 0.0f, 255.0f);
-		uint8_t g = CLAMP ((q1[y])*300.0f, 0.0f, 255.0f);
+		uint8_t r = CLAMP ((-q1[y])*100.0f, 0.0f, 255.0f);
+		uint8_t g = CLAMP ((q1[y])*100.0f, 0.0f, 255.0f);
 		img[y*xn+1] = RGBA (r, g, 0x22, 0xFF);
 		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
 	}
 
 	for (uint32_t y = 0; y < yn; ++y)
 	{
-		uint8_t r = CLAMP ((-q2[y])*300.0f, 0.0f, 255.0f);
-		uint8_t g = CLAMP ((q2[y])*300.0f, 0.0f, 255.0f);
+		uint8_t r = CLAMP ((-q2[y])*100.0f, 0.0f, 255.0f);
+		uint8_t g = CLAMP ((q2[y])*100.0f, 0.0f, 255.0f);
 		img[y*xn+0] = RGBA (r, g, 0x22, 0xFF);
 		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
 	}
@@ -397,23 +560,32 @@ void show (const char * filename, nng_socket socks[])
 	//Amplify skitrack pattern in the 2D image:
 	image_skitrack_convolution (img2, img1, IMG_XN, IMG_YN);
 	//vf32_remove_low_values (img2, IMG_XN*IMG_YN);
-	//image_convolution1 (img3, img2, IMG_XN, IMG_YN);
-	memcpy (img3, img2, sizeof(img3));
+	image_convolution1 (img3, img2, IMG_XN, IMG_YN);
+	vf32_remove_low_values (img3, IMG_XN*IMG_YN);
+	//memcpy (img3, img2, sizeof(img3));
+
 
 
 	//Find the most common lines direction in the image which hopefully matches the direction of the skitrack:
-	float k = vf32_most_common_line (img3, IMG_XN, IMG_YN, 20);
-
-
 	//Project 2D image to a 1D image in the the most common direction (k):
 	float q1[IMG_YN] = {0.0f};
 	float q2[IMG_YN] = {0.0f};
-	vf32_project_2d_to_1d (img3, IMG_XN, IMG_YN, k, q1);
-	//vf32_remove_low_values (q, IMG_YN);
+	//float k = vf32_most_common_line (img3, IMG_XN, IMG_YN, 20);
+	float k = vf32_most_common_line2 (img3, IMG_XN, IMG_YN, q1);
+	//vf32_project_2d_to_1d (img3, IMG_XN, IMG_YN, k, q1);
+	vf32_project_2d_to_1d_pn (img3, IMG_XN, IMG_YN, k, q1);
+	vf32_remove_low_values (q1, IMG_YN);
 
 
 	//Amplify skitrack pattern in the 1D image:
-	float skitrack_kernel1d[] = {-7.0f, -3.0f, 1.0f, 2.0f, 1.0f, -3.0f, -7.0f};
+	float skitrack_kernel1d[] =
+	{
+	 1.0f,  3.0f,  1.0f,
+	-3.0f, -9.0f, -3.0f,
+	 1.0f,  7.0f,  1.0f,
+	-3.0f, -9.0f, -3.0f,
+	 1.0f,  3.0f,  1.0f
+	};
 	vf32_convolution1d (q1, IMG_YN, q2, skitrack_kernel1d, countof (skitrack_kernel1d));
 
 
@@ -426,6 +598,8 @@ void show (const char * filename, nng_socket socks[])
 	}
 
 	//Visualize the skitrack and more information:
+	//vf32_normalize (countof (q1), q1, q1);
+	//vf32_normalize (countof (q2), q2, q2);
 	image_visual (imgv, img1, IMG_XN, IMG_YN, q1, q2, g, 2, k);
 
 
@@ -547,6 +721,9 @@ int main (int argc, char const * argv[])
 	//show ("14_13_55_22978.txt", socks);
 	//show ("14_13_58_25517.txt", socks);
 	//show ("14_13_53_20783.txt", socks);
+	//show ("14_13_55_22978.txt", socks);
+	//show ("14_13_54_21339.txt", socks);
+	//show ("14_13_59_26063.txt", socks);
 
 
 #if 1
@@ -555,17 +732,13 @@ int main (int argc, char const * argv[])
 	char buf[200] = {'\0'};
 	while (1)
 	{
-		int c;
-		do
-		{
-			c = getchar();
-		}
-		while (c == '\n');
+		int c = getchar();
 		switch (c)
 		{
 		case 'q':
 			goto exit_while;
 			break;
+		case '\n':
 		case 'n':
 			if (fgets (buf, sizeof (buf), f) == NULL) {goto exit_while;};
 			buf[strcspn(buf, "\r\n")] = 0;
