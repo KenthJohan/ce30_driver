@@ -447,7 +447,7 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
 	}
 
-
+#if 0
 	for (uint32_t i = 0; i < m; ++i)
 	{
 		if (g[i] < yn)
@@ -455,8 +455,31 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 			img[g[i]*xn+2] = RGBA (0x00, 0x00, 0xFF, 0xFF);
 		}
 	}
+#endif
+
+#if 1
+	for (uint32_t i = 0; i < m; ++i)
+	{
+		if (g[i] < yn)
+		{
+			uint32_t y = g[i];
+			for (uint32_t x = 0; x < xn; ++x)
+			{
+				float yy = (float)y + (float)x*k;
+				if (yy < 0.0f){continue;}
+				if (yy >= (float)yn){continue;}
+				ASSERT (yy >= 0);
+				ASSERT (yy < (float)yn);
+				uint32_t index = (uint32_t)yy * xn + x;
+				ASSERT (index < xn*yn);
+				img[index] |= RGBA (0x00, 0x00, 0x66, 0xFF);
+			}
+		}
+	}
+#endif
 
 
+#if 0
 	for (uint32_t y = 10; y < 11; ++y)
 	{
 		for (uint32_t x = 0; x < xn; ++x)
@@ -471,7 +494,7 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 			img[index] = RGBA (0xF0, 0xF0, 0x00, 0xFF);
 		}
 	}
-
+#endif
 
 }
 
