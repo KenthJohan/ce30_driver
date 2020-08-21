@@ -759,10 +759,10 @@ void show (const char * filename, nng_socket socks[])
 
 
 	{
-		pixel_to_point (lines+12*4, IMG_XN, IMG_YN, 0.0f, 0.0f, g[0]);
-		pixel_to_point (lines+13*4, IMG_XN, IMG_YN, 1.0f, 0.0f, g[0]);
-		pixel_to_point (lines+14*4, IMG_XN, IMG_YN, 0.0f, 0.0f, g[1]);
-		pixel_to_point (lines+15*4, IMG_XN, IMG_YN, 1.0f, 0.0f, g[1]);
+		pixel_to_point (lines+12*4, IMG_XN, IMG_YN, 0.0f, -10.0f, g[0] - 10.0f * k);
+		pixel_to_point (lines+13*4, IMG_XN, IMG_YN, 0.0f,  30.0f, g[0] + 30.0f * k);
+		pixel_to_point (lines+14*4, IMG_XN, IMG_YN, 0.0f, -10.0f, g[1] - 10.0f * k);
+		pixel_to_point (lines+15*4, IMG_XN, IMG_YN, 0.0f,  30.0f, g[1] + 30.0f * k);
 		float rot[3*3];
 
 		memcpy (rot, rotation, sizeof (rot));
@@ -777,6 +777,7 @@ void show (const char * filename, nng_socket socks[])
 		vvf32_add (4, lines+13*4, lines+13*4, pc_mean);
 		vvf32_add (4, lines+14*4, lines+14*4, pc_mean);
 		vvf32_add (4, lines+15*4, lines+15*4, pc_mean);
+
 
 		//TODO: Do a matrix matrix multiplication instead of matrix vector multiplication:
 		//for (float * v = lines+12*4; v < lines+15*4; v += POINT_STRIDE)
