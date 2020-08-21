@@ -12,6 +12,10 @@ QMAKE_CFLAGS += -Wno-unused-function
 SOURCES += pointfile.c
 HEADERS += calculation.h
 HEADERS += ../csc/csc_math.h
+HEADERS += ../csc/csc_v3f32.h
+HEADERS += ../csc/csc_linmat.h
+HEADERS += ../csc/csc_m3f32.h
+HEADERS += ../csc/csc_m4f32.h
 
 
 INCLUDEPATH += C:/msys64/mingw64/include

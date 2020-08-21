@@ -210,6 +210,32 @@ void point_filter (float dst[], uint32_t dst_stride, float const src[], uint32_t
 }
 
 
+void point_to_pixel (float const p[4], uint32_t xn, uint32_t yn, float * pixel, float * x, float * y)
+{
+	float const sx = 20.0f;
+	float const sy = 20.0f;
+	(*x) = p[0]*sx + xn/2.0f;
+	(*y) = p[1]*sy + yn/2.0f;
+	//z-value becomes the pixel value:
+	(*pixel) = p[2];
+}
+
+
+void pixel_to_point (float p[4], uint32_t xn, uint32_t yn, float pixel, float x, float y)
+{
+	float const sx = 20.0f;
+	float const sy = 20.0f;
+	//x = p*sx + xn/2
+	//x - xn/2 = p*sx
+	//(x - xn/2)/sx = p
+	p[0] = (x - xn/2) / sx;
+	p[1] = (y - yn/2) / sy;
+	p[2] = pixel;
+}
+
+
+
+
 void point_project (float pix[], float imgf[], uint32_t xn, uint32_t yn, float v[], uint32_t v_stride, uint32_t x_count)
 {
 	for (uint32_t i = 0; i < x_count; ++i, v += v_stride)
@@ -217,10 +243,11 @@ void point_project (float pix[], float imgf[], uint32_t xn, uint32_t yn, float v
 		//v[2] += 1.0f;
 		//(x,y) becomes the pixel position:
 		//Set origin in the middle of the image and 20 pixels becomes 1 meter:
-		float x = v[0]*20.0f + xn/2.0f;
-		float y = v[1]*20.0f + yn/2.0f;
 		//z-value becomes the pixel value:
-		float z = v[2];
+		float x;
+		float y;
+		float z;
+		point_to_pixel (v, xn, yn, &z, &x, &y);
 		//Crop the pointcloud to the size of the image;
 		if (x >= xn){continue;}
 		if (y >= yn){continue;}
@@ -430,20 +457,33 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 		//pix_rgba[i] = RGBA (pix1[i] > 0.4f ? 0xFF : 0x00, 0x00, 0x00, 0xFF);
 	}
 
-
 	for (uint32_t y = 0; y < yn; ++y)
 	{
-		uint8_t r = CLAMP ((-q1[y])*100.0f, 0.0f, 255.0f);
-		uint8_t g = CLAMP ((q1[y])*100.0f, 0.0f, 255.0f);
-		img[y*xn+1] = RGBA (r, g, 0x22, 0xFF);
+		if (q1[y])
+		{
+			uint8_t r = CLAMP ((-q1[y])*100.0f, 0.0f, 255.0f);
+			uint8_t g = CLAMP ((q1[y])*100.0f, 0.0f, 255.0f);
+			img[y*xn+1] = RGBA (r, g, 0x00, 0xFF);
+		}
+		else
+		{
+			img[y*xn+1] = RGBA (0x22, 0x22, 0x22, 0xFF);
+		}
 		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
 	}
 
 	for (uint32_t y = 0; y < yn; ++y)
 	{
-		uint8_t r = CLAMP ((-q2[y])*100.0f, 0.0f, 255.0f);
-		uint8_t g = CLAMP ((q2[y])*100.0f, 0.0f, 255.0f);
-		img[y*xn+0] = RGBA (r, g, 0x22, 0xFF);
+		if (q2[y])
+		{
+			uint8_t r = CLAMP ((-q2[y])*100.0f, 0.0f, 255.0f);
+			uint8_t g = CLAMP ((q2[y])*100.0f, 0.0f, 255.0f);
+			img[y*xn+0] = RGBA (r, g, 0x00, 0xFF);
+		}
+		else
+		{
+			img[y*xn+0] = RGBA (0x22, 0x22, 0x22, 0xFF);
+		}
 		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
 	}
 
@@ -500,6 +540,19 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 
 
 
+lapack_int matInv (float *A, unsigned n)
+{
+	int ipiv[3*3];
+	lapack_int ret;
+	ret =  LAPACKE_sgetrf (LAPACK_COL_MAJOR,n,n,A,n,ipiv);
+	if (ret !=0)
+		return ret;
+	ret = LAPACKE_sgetri (LAPACK_COL_MAJOR,n,A,n,ipiv);
+	return ret;
+}
+
+
+
 
 /*
 	 1: Read filename                   : (Filename) -> (text 3D points)
@@ -522,7 +575,8 @@ static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn,
 */
 void show (const char * filename, nng_socket socks[])
 {
-	float point_pos1[LIDAR_WH*POINT_STRIDE] = {0.0f};
+	float point_pos1[LIDAR_WH*POINT_STRIDE*2] = {0.0f};
+	uint32_t pointcol[LIDAR_WH*2] = {RGBA (0xFF, 0xFF, 0xFF, 0xFF)};//The color of each point. This is only used for visualization.
 	uint32_t point_pos1_count = LIDAR_WH;
 	float img1[IMG_XN*IMG_YN] = {0.0f};//Projected points
 	float img2[IMG_XN*IMG_YN] = {0.0f};//Convolution from img1
@@ -532,7 +586,6 @@ void show (const char * filename, nng_socket socks[])
 	float c[3*3];//Covariance matrix first then 3x eigen vectors
 	float w[3];//Eigen values
 	float pc_mean[3];
-	uint32_t pointcol[LIDAR_WH] = {RGBA (0xFF, 0xFF, 0xFF, 0xFF)};//The color of each point. This is only used for visualization.
 
 
 	//Read all points from the filename:
@@ -542,6 +595,8 @@ void show (const char * filename, nng_socket socks[])
 		points_read (txtpoint, point_pos1, &point_pos1_count);
 		free ((void*)txtpoint);
 	}
+
+	memcpy (point_pos1 + LIDAR_WH*POINT_STRIDE, point_pos1, LIDAR_WH*POINT_STRIDE*sizeof(float));
 
 	//Remove bad points:
 	point_filter (point_pos1, POINT_STRIDE, point_pos1, POINT_STRIDE, &point_pos1_count, 3, 1.0f);
@@ -627,6 +682,7 @@ void show (const char * filename, nng_socket socks[])
 
 
 
+
 	//pix_rgba[105*IMG_XN + 12] |= RGBA(0x00, 0x66, 0x00, 0x00);
 	//pix_rgba[0*IMG_XN + 1] |= RGBA(0x00, 0xFF, 0x00, 0xFF);
 	//pix_rgba[2*IMG_XN + 0] |= RGBA(0x00, 0xFF, 0xff, 0xFF);
@@ -674,30 +730,63 @@ void show (const char * filename, nng_socket socks[])
 	uint32_t line_col[18] =
 	{
 	//Origin axis:
-	RGBA(0xFF, 0x00, 0x00, 0xFF), //Origin axis 1 start
-	RGBA(0xFF, 0x00, 0x00, 0xFF), //Origin axis 1 end
-	RGBA(0x00, 0xFF, 0x00, 0xFF), //Origin axis 2 start
-	RGBA(0x00, 0xFF, 0x00, 0xFF), //Origin axis 2 end
-	RGBA(0x00, 0x00, 0xFF, 0xFF), //Origin axis 3 start
-	RGBA(0x00, 0x00, 0xFF, 0xFF), //Origin axis 3 end
+	RGBA(0xFF, 0x00, 0x00, 0xAA), //Origin axis 1 start
+	RGBA(0xFF, 0x00, 0x00, 0xAA), //Origin axis 1 end
+	RGBA(0x00, 0xFF, 0x00, 0xAA), //Origin axis 2 start
+	RGBA(0x00, 0xFF, 0x00, 0xAA), //Origin axis 2 end
+	RGBA(0x00, 0x00, 0xFF, 0xAA), //Origin axis 3 start
+	RGBA(0x00, 0x00, 0xFF, 0xAA), //Origin axis 3 end
 
 	//PCA axis colors:
-	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 1 start
-	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 1 end
-	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 2 start
-	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 2 end
-	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 3 start
-	RGBA(0xFF, 0xFF, 0xFF, 0x33), //PCA axis 3 end
+	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 1 start
+	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 1 end
+	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 2 start
+	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 2 end
+	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 3 start
+	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 3 end
 
 	//TODO: What is this?
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
-	RGBA(0xFF, 0xFF, 0xFF, 0x33),
+	RGBA(0x33, 0xFF, 0x88, 0xFF),
+	RGBA(0x33, 0xFF, 0x88, 0xFF),
+	RGBA(0x33, 0xFF, 0x88, 0xFF),
+	RGBA(0x33, 0xFF, 0x88, 0xFF),
+	RGBA(0x33, 0xFF, 0x88, 0xFF),
+	RGBA(0x33, 0xFF, 0x88, 0xFF),
 
 	};
+
+
+
+
+	{
+		pixel_to_point (lines+12*4, IMG_XN, IMG_YN, 0.0f, 0.0f, g[0]);
+		pixel_to_point (lines+13*4, IMG_XN, IMG_YN, 1.0f, 0.0f, g[0]);
+		pixel_to_point (lines+14*4, IMG_XN, IMG_YN, 0.0f, 0.0f, g[1]);
+		pixel_to_point (lines+15*4, IMG_XN, IMG_YN, 1.0f, 0.0f, g[1]);
+		float rot[3*3];
+
+		memcpy (rot, rotation, sizeof (rot));
+		matInv (rot, 3);
+
+
+		mv3f32_mul (lines+12*4, rot, lines+12*4);
+		mv3f32_mul (lines+13*4, rot, lines+13*4);
+		mv3f32_mul (lines+14*4, rot, lines+14*4);
+		mv3f32_mul (lines+15*4, rot, lines+15*4);
+		vvf32_add (4, lines+12*4, lines+12*4, pc_mean);
+		vvf32_add (4, lines+13*4, lines+13*4, pc_mean);
+		vvf32_add (4, lines+14*4, lines+14*4, pc_mean);
+		vvf32_add (4, lines+15*4, lines+15*4, pc_mean);
+
+		//TODO: Do a matrix matrix multiplication instead of matrix vector multiplication:
+		//for (float * v = lines+12*4; v < lines+15*4; v += POINT_STRIDE)
+		{
+			//mv3f32_mul (v, rot, v);
+		}
+
+		//vf32_print (stdout, p0, 4, "%+f2.2 ");
+		//vf32_print (stdout, p1, 4, "%+f2.2 ");
+	}
 
 
 
@@ -708,9 +797,9 @@ void show (const char * filename, nng_socket socks[])
 		perror (nng_strerror (r));
 		r = nng_send (socks[MAIN_NNGSOCK_LINE_COL], line_col, 18*sizeof(uint32_t), 0);
 		perror (nng_strerror (r));
-		r = nng_send (socks[MAIN_NNGSOCK_POINTCLOUD_POS], point_pos1, LIDAR_WH*4*sizeof(float), 0);
+		r = nng_send (socks[MAIN_NNGSOCK_POINTCLOUD_POS], point_pos1, LIDAR_WH*4*sizeof(float)*2, 0);
 		perror (nng_strerror (r));
-		r = nng_send (socks[MAIN_NNGSOCK_POINTCLOUD_COL], pointcol, LIDAR_WH*sizeof(uint32_t), 0);
+		r = nng_send (socks[MAIN_NNGSOCK_POINTCLOUD_COL], pointcol, LIDAR_WH*sizeof(uint32_t)*2, 0);
 		perror (nng_strerror (r));
 		r = nng_send (socks[MAIN_NNGSOCK_TEX], imgv, IMG_XN*IMG_YN*sizeof(uint32_t), 0);
 		perror (nng_strerror (r));
@@ -734,7 +823,7 @@ int main (int argc, char const * argv[])
 	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_POS,       "tcp://localhost:9006");
 	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_COL,       "tcp://localhost:9007");
 
-	chdir ("../ce30_demo/txtpoints2");
+	chdir ("../ce30_demo/txtpoints/10");
 
 	//show ("14_13_57_24145.txt", socks);
 	//show ("14_13_55_22538.txt", socks);
@@ -747,7 +836,8 @@ int main (int argc, char const * argv[])
 	//show ("14_13_55_22978.txt", socks);
 	//show ("14_13_54_21339.txt", socks);
 	//show ("14_13_59_26063.txt", socks);
-
+	//show ("14_16_57_204577.txt", socks);
+	//return 0;
 
 #if 1
 	FILE * f = popen ("ls", "r");
