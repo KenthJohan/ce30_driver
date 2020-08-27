@@ -36,520 +36,24 @@
 #include "calculation.h"
 
 
-#define IMG_XN 20
-#define IMG_YN 120
 
-
-void vf32_project_2d_to_1d (float p[], uint32_t xn, uint32_t yn, float k, float q[])
+enum visual_line
 {
-	for (uint32_t y = 0; y < yn; ++y)
-	{
-		float sum = 0.0f;
-		for (uint32_t x = 0; x < xn; ++x)
-		{
-			float yy = (float)y + (float)x*k;
-			if (yy < 0.0f){continue;}
-			if (yy >= (float)yn){continue;}
-			ASSERT (yy >= 0.0f);
-			ASSERT (yy < (float)yn);
-			uint32_t index = (uint32_t)yy*xn + x;
-			ASSERT (index < xn*yn);
-			sum += p[index];
-		}
-		//p[y*xn+0] = sum * (1.0f / (float)xn);
-		float val = sum;
-		q[y] = val;
-		//float yy = (float)y + ((float)xn-1.0f)*k;
-		//yy = CLAMP (yy, 0, yn);
-		//q[(int)yy] = val;
-	}
-}
-
-
-void vf32_project_2d_to_1d_pn (float const p[], uint32_t xn, uint32_t yn, float k, float q[])
-{
-	for (uint32_t y = 0; y < yn; ++y)
-	{
-		float sump = 0.0f;
-		float sumn = 0.0f;
-		for (uint32_t x = 0; x < xn; ++x)
-		{
-			float yy = (float)y + (float)x*k;
-			if (yy < 0.0f){continue;}
-			if (yy >= (float)yn){continue;}
-			ASSERT (yy >= 0.0f);
-			ASSERT (yy < (float)yn);
-			uint32_t index = (uint32_t)yy*xn + x;
-			ASSERT (index < xn*yn);
-			if (p[index] > 0.0f)
-			{
-				sump += 1;
-			}
-			if (p[index] < 0.0f)
-			{
-				sumn += 1;
-			}
-		}
-		//p[y*xn+0] = sum * (1.0f / (float)xn);
-		float val = (sump - sumn) / xn;
-		q[y] = val;
-		//float yy = (float)y + ((float)xn-1.0f)*k;
-		//yy = CLAMP (yy, 0, yn);
-		//q[(int)yy] = val;
-	}
-}
-
-
-
-float vf32_most_common_line (float const p[], uint32_t xn, uint32_t yn, uint32_t yp)
-{
-	float highscore = 0.0f;
-	float k1 = 0.0f;
-	float const delta = 0.1f;
-	for (float k = -1.0f; k < 1.0f; k += delta)
-	{
-		float score = 0.0f;
-		for (uint32_t y = yp; y < yn-yp; ++y)
-		{
-			float sum = 0.0f;
-			for (uint32_t x = 0; x < xn; ++x)
-			{
-				//skew in the y-direction by (k) amount:
-				float yy = y + x*k;
-				if (yy < 0.0f || yy >= yn)
-				{
-					continue;
-				}
-				ASSERT (yy >= 0.0f);
-				ASSERT (yy < (float)yn);
-				uint32_t index = (uint32_t)yy*xn + x;
-				ASSERT (index < xn*yn);
-				//Sum of noisy pixel will become close to zero:
-				//Sum of similiar pixel will become large positive or negative value:
-				//TODO: Do not count undefined pixels:
-				sum += p[index];
-			}
-			score += sum*sum;
-		}
-		if (score > highscore)
-		{
-			highscore = score;
-			k1 = k;
-		}
-		printf ("sum:  %+f : %f\n", k, score);
-	}
-	printf ("best: %+f : %f\n", k1, highscore);
-	return k1;
-}
-
-
-
-float vf32_most_common_line2 (float const p[], uint32_t xn, uint32_t yn, float q[])
-{
-	float max = 0.0f;
-	float k1 = 0.0f;
-	float const delta = 0.1f;
-	for (float k = -1.0f; k < 1.0f; k += delta)
-	{
-		vf32_project_2d_to_1d_pn (p, xn, yn, k, q);
-		float sum = 0.0f;
-		for (uint32_t i = 0; i < yn; ++i)
-		{
-			sum += q[i]*q[i];
-		}
-		if (sum > max)
-		{
-			max = sum;
-			k1 = k;
-		}
-	}
-	printf ("max: %+f : %f\n", k1, max);
-	return k1;
-}
+	VISUAL_LINE_ORIGIN_0,
+	VISUAL_LINE_ORIGIN_1,
+	VISUAL_LINE_ORIGIN_2,
+	VISUAL_LINE_PCA_0,
+	VISUAL_LINE_PCA_1,
+	VISUAL_LINE_PCA_2,
+	VISUAL_LINE_SKITRACK,
+	VISUAL_LINE_SKITRACK_END = VISUAL_LINE_SKITRACK + SKITRACK2_PEAKS_COUNT - 1,
+	VISUAL_LINE_COUNT
+};
 
 
 
 
 
-
-
-
-void point_select (uint32_t pointcol[LIDAR_WH], int x, int y, uint32_t color)
-{
-	int index = LIDAR_INDEX(x,y);
-	ASSERT (index < LIDAR_WH);
-	printf ("index %i\n", index);
-	pointcol[index] = color;
-}
-
-/**
- * @brief Filter out points that is not good for finding the ground plane
- * @param[out]    dst           Pointer to the destination array where the elements is to be copied
- * @param[in]     dst_stride    Specifies the byte offset between consecutive elements
- * @param[in]     src           Pointer to the source of data to be copied
- * @param[out]    src_stride    Specifies the byte offset between consecutive elements
- * @param[in,out] n             Is a pointer to an integer related to the number of elements to copy or how many were copied
- * @param[in]     dim           How many dimension in each element
- * @param[in]     k2
- */
-void point_filter (float dst[], uint32_t dst_stride, float const src[], uint32_t src_stride, uint32_t *n, uint32_t dim, float k2)
-{
-	uint32_t j = 0;
-	for (uint32_t i = 0; i < (*n); ++i)
-	{
-		float l2 = vvf32_dot (dim, src, src);
-		if (l2 > k2)
-		{
-			vf32_cpy (dim, dst, src);
-			dst += dst_stride;
-			j++;
-		}
-		src += src_stride;
-	}
-	(*n) = j;
-}
-
-
-void point_to_pixel (float const p[4], uint32_t xn, uint32_t yn, float * pixel, float * x, float * y)
-{
-	float const sx = 20.0f;
-	float const sy = 20.0f;
-	(*x) = p[0]*sx + xn/2.0f;
-	(*y) = p[1]*sy + yn/2.0f;
-	//z-value becomes the pixel value:
-	(*pixel) = p[2];
-}
-
-
-void pixel_to_point (float p[4], uint32_t xn, uint32_t yn, float pixel, float x, float y)
-{
-	float const sx = 20.0f;
-	float const sy = 20.0f;
-	//x = p*sx + xn/2
-	//x - xn/2 = p*sx
-	//(x - xn/2)/sx = p
-	p[0] = (x - xn/2) / sx;
-	p[1] = (y - yn/2) / sy;
-	p[2] = pixel;
-}
-
-
-
-
-void point_project (float pix[], float imgf[], uint32_t xn, uint32_t yn, float v[], uint32_t v_stride, uint32_t x_count)
-{
-	for (uint32_t i = 0; i < x_count; ++i, v += v_stride)
-	{
-		//v[2] += 1.0f;
-		//(x,y) becomes the pixel position:
-		//Set origin in the middle of the image and 20 pixels becomes 1 meter:
-		//z-value becomes the pixel value:
-		float x;
-		float y;
-		float z;
-		point_to_pixel (v, xn, yn, &z, &x, &y);
-		//Crop the pointcloud to the size of the image;
-		if (x >= xn){continue;}
-		if (y >= yn){continue;}
-		if (x < 0){continue;}
-		if (y < 0){continue;}
-		//Convert (x,y) to index row-major:
-		uint32_t index = ((uint32_t)y * xn) + (uint32_t)x;
-		//z += 10.0f;
-		//If multiple points land on one pixel then it will be accumalted but it will also be normalized later on:
-		pix[index] += z;
-		imgf[index] += 1.0f;
-		//pix[index] = 0.5f*pix[index] + 0.5f*z;
-	}
-
-	//Normalize every non zero pixel:
-	for (uint32_t i = 0; i < IMG_XN*IMG_YN; ++i)
-	{
-		if (imgf[i] > 0.0f)
-		{
-			pix[i] /= imgf[i];
-		}
-	}
-
-	for (uint32_t i = 0; i < IMG_XN*IMG_YN; ++i)
-	{
-		//Gradient convolution could be applied later so this statement will have no effect:
-		//It is important that this statement does not affect the end result:
-		//This statement test scenories where average pointcloud z-position is far of origin:
-		//pix[i] += 10.0f;
-	}
-}
-
-
-void image_skitrack_convolution (float pix2[], float const pix[], int32_t xn, int32_t yn)
-{
-#if 0
-	int32_t kxn = 3;
-	int32_t kyn = 5;
-	float kernel[3*5] =
-	{
-	 -2.0f, -5.0f, -2.0f, //Skitrack edge
-	  1.0f,  2.0f,  1.0f, //Skitrack dipping
-	  2.0f,  5.0f,  2.0f, //Skitrack dipping
-	  1.0f,  2.0f,  1.0f, //Skitrack dipping
-	 -2.0f, -5.0f, -2.0f, //Skitrack edge
-	};
-#endif
-
-#if 1
-	int32_t kxn = 1;
-	int32_t kyn = 5;
-	float kernel[1*5] =
-	{
-	-5.0f,
-	2.0f,
-	6.0f,
-	2.0f,
-	-5.0f
-	};
-#endif
-
-#if 0
-	int32_t kxn = 1;
-	int32_t kyn = 13;
-	float kernel[1*13] =
-	{
-	1.0f, //Skitrack dipping
-	 1.0f, //Skitrack dipping
-	 -4.0f, //Skitrack edge
-	 -9.0f, //Skitrack edge
-	 -4.0f, //Skitrack edge
-	  2.0f, //Skitrack dipping
-	  9.0f, //Skitrack dipping
-	  2.0f, //Skitrack dipping
-	 -4.0f, //Skitrack edge
-	 -9.0f, //Skitrack edge
-	 -4.0f, //Skitrack edge
-	 1.0f, //Skitrack dipping
-	1.0f, //Skitrack dipping
-	};
-#endif
-
-#if 0
-	int32_t kxn = 3;
-	int32_t kyn = 7;
-
-	float kernel[3*7] =
-	{
-	 -2.0f, -6.0f, -2.0f, //Skitrack edge
-	 -1.0f, -3.0f, -1.0f, //Skitrack edge
-	  1.0f,  4.0f,  1.0f, //Skitrack dipping
-	  3.0f,  6.0f,  3.0f, //Skitrack dipping
-	  1.0f,  4.0f,  1.0f, //Skitrack dipping
-	 -1.0f, -3.0f, -1.0f, //Skitrack edge
-	 -2.0f, -6.0f, -2.0f, //Skitrack edge
-	};
-#endif
-
-	//*/
-	/*
-	float kernel1[3*5] =
-	{
-	 0.0f,  0.0f,  0.0f,
-	 0.0f,  0.0f,  0.0f,
-	 0.0f,  1.0f,  0.0f,
-	 0.0f,  0.0f,  0.0f,
-	 0.0f,  0.0f,  0.0f,
-	};
-	*/
-	/*
-	int32_t kxn = 1;
-	int32_t kyn = 11;
-	float kernel[11] =
-	{
-	 1.0f,
-	 1.0f,
-	-1.0f,
-	-2.0f,
-	-1.0f,
-	 2.0f,
-	 2.0f,
-	-1.0f,
-	-2.0f,
-	-1.0f,
-	 1.0f,
-	};
-	*/
-	vf32_normalize (kxn*kyn, kernel, kernel);
-	vf32_convolution2d (pix2, pix, xn, yn, kernel, kxn, kyn);
-}
-
-
-void image_convolution1 (float pix2[], float const pix[], int32_t xn, int32_t yn)
-{
-	int32_t kxn = 3;
-	int32_t kyn = 3;
-
-	float kernel[3*3] =
-	{
-	 1.0f, 1.0f, 1.0f,
-	 1.0f, 2.0f, 1.0f,
-	 1.0f, 1.0f, 1.0f,
-	};
-	vf32_normalize (kxn*kyn, kernel, kernel);
-	vf32_convolution2d (pix2, pix, xn, yn, kernel, kxn, kyn);
-}
-
-
-void find_pattern (float q[], uint32_t qn, uint32_t g[], uint32_t gn)
-{
-	uint32_t gi = 0;
-	uint32_t qi = 0;
-	uint32_t n;
-	uint32_t c = 0;
-	while (1)
-	{
-		if (gi >= gn) {break;};
-		if (qi >= qn) {break;};
-
-		uint32_t qi0 = qi;
-
-		vf32_skip_zero (q, qn, &qi0);
-		n = vf32_amount_positive (q, qn, &qi0, 100);
-		if (n < 1) {qi++; continue;};
-
-		//skip_zero (q, qn, &qi0);
-		n = vf32_amount_negative (q, qn, &qi0, 100);
-		if (n < 1 || n > 4) {qi++; continue;};
-
-		//skip_zero (q, qn, &qi0);
-		n = vf32_amount_positive (q, qn, &qi0, 100);
-		if (n < 1 || n > 4) {qi++; continue;}
-		c = qi0 - (n/2) - 1;
-
-		//skip_zero (q, qn, &qi0);
-		n = vf32_amount_negative (q, qn, &qi0, 100);
-		if (n < 1 || n > 4) {qi++; continue;};
-
-		//skip_zero (q, qn, &qi0);
-		n = vf32_amount_positive (q, qn, &qi0, 100);
-		if (n < 1) {qi++; continue;};
-
-		qi = qi0 + 10;
-		g[gi] = c;
-		gi++;
-	}
-}
-
-
-/**
- * @brief Create RGBA image visualisation
- * @param[out] img  RGBA image visual
- * @param[in]  pix  Grayscale image
- * @param[in]  w    Width of the image
- * @param[in]  h    Height of the image
- */
-static void image_visual (uint32_t img[], float pix[], uint32_t xn, uint32_t yn, float q1[], float q2[], uint32_t g[], uint32_t m, float k)
-{
-	for (uint32_t i = 0; i < xn*yn; ++i)
-	{
-		//Negatives becomes red and positives becomes greeen:
-		uint8_t r = CLAMP ((-pix[i])*3000.0f, 0.0f, 255.0f);
-		uint8_t g = CLAMP ((pix[i])*3000.0f, 0.0f, 255.0f);
-		//uint8_t r = CLAMP (pix1[i]*1000.0f, 0.0f, 255.0f);
-		//uint8_t g = CLAMP (-pix1[i]*1000.0f, 0.0f, 255.0f);
-		img[i] = RGBA (r, g, 0x00, 0xFF);
-		//pix_rgba[i] = RGBA (pix1[i] > 0.4f ? 0xFF : 0x00, 0x00, 0x00, 0xFF);
-	}
-
-	for (uint32_t y = 0; y < yn; ++y)
-	{
-		if (q1[y])
-		{
-			uint8_t r = CLAMP ((-q1[y])*100.0f, 0.0f, 255.0f);
-			uint8_t g = CLAMP ((q1[y])*100.0f, 0.0f, 255.0f);
-			img[y*xn+1] = RGBA (r, g, 0x00, 0xFF);
-		}
-		else
-		{
-			img[y*xn+1] = RGBA (0x22, 0x22, 0x22, 0xFF);
-		}
-		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
-	}
-
-	for (uint32_t y = 0; y < yn; ++y)
-	{
-		if (q2[y])
-		{
-			uint8_t r = CLAMP ((-q2[y])*100.0f, 0.0f, 255.0f);
-			uint8_t g = CLAMP ((q2[y])*100.0f, 0.0f, 255.0f);
-			img[y*xn+0] = RGBA (r, g, 0x00, 0xFF);
-		}
-		else
-		{
-			img[y*xn+0] = RGBA (0x22, 0x22, 0x22, 0xFF);
-		}
-		//img[y*xn+xn-1] = RGBA (r, g, 0x00, 0xFF);
-	}
-
-#if 0
-	for (uint32_t i = 0; i < m; ++i)
-	{
-		if (g[i] < yn)
-		{
-			img[g[i]*xn+2] = RGBA (0x00, 0x00, 0xFF, 0xFF);
-		}
-	}
-#endif
-
-#if 1
-	for (uint32_t i = 0; i < m; ++i)
-	{
-		if (g[i] < yn)
-		{
-			uint32_t y = g[i];
-			for (uint32_t x = 0; x < xn; ++x)
-			{
-				float yy = (float)y + (float)x*k;
-				if (yy < 0.0f){continue;}
-				if (yy >= (float)yn){continue;}
-				ASSERT (yy >= 0);
-				ASSERT (yy < (float)yn);
-				uint32_t index = (uint32_t)yy * xn + x;
-				ASSERT (index < xn*yn);
-				img[index] |= RGBA (0x00, 0x00, 0x66, 0xFF);
-			}
-		}
-	}
-#endif
-
-
-#if 0
-	for (uint32_t y = 10; y < 11; ++y)
-	{
-		for (uint32_t x = 0; x < xn; ++x)
-		{
-			float yy = (float)y + (float)x*k;
-			if (yy < 0.0f){continue;}
-			if (yy >= (float)yn){continue;}
-			ASSERT (yy >= 0);
-			ASSERT (yy < (float)yn);
-			uint32_t index = (uint32_t)yy * xn + x;
-			ASSERT (index < xn*yn);
-			img[index] = RGBA (0xF0, 0xF0, 0x00, 0xFF);
-		}
-	}
-#endif
-
-}
-
-
-
-lapack_int matInv (float *A, unsigned n)
-{
-	int ipiv[3*3];
-	lapack_int ret;
-	ret =  LAPACKE_sgetrf (LAPACK_COL_MAJOR,n,n,A,n,ipiv);
-	if (ret !=0)
-		return ret;
-	ret = LAPACKE_sgetri (LAPACK_COL_MAJOR,n,A,n,ipiv);
-	return ret;
-}
 
 
 
@@ -575,110 +79,24 @@ lapack_int matInv (float *A, unsigned n)
 */
 void show (const char * filename, nng_socket socks[])
 {
-	float point_pos1[LIDAR_WH*POINT_STRIDE*2] = {0.0f};
+	struct skitrack1 s1 = {0};
+	struct skitrack2 s2 = {0};
+
+	float pointpos[LIDAR_WH*POINT_STRIDE*2];
 	uint32_t pointcol[LIDAR_WH*2] = {RGBA (0xFF, 0xFF, 0xFF, 0xFF)};//The color of each point. This is only used for visualization.
-	uint32_t point_pos1_count = LIDAR_WH;
-	float img1[IMG_XN*IMG_YN] = {0.0f};//Projected points
-	float img2[IMG_XN*IMG_YN] = {0.0f};//Convolution from img1
-	float img3[IMG_XN*IMG_YN] = {0.0f};//Convolution from img2
-	float imgf[IMG_XN*IMG_YN] = {0.0f};//Used for normalizing pixel
 	uint32_t imgv[IMG_XN*IMG_YN] = {0};//Used for visual confirmation that the algorithm works
-	float c[3*3];//Covariance matrix first then 3x eigen vectors
-	float w[3];//Eigen values
-	float pc_mean[3];
 
 
-	//Read all points from the filename:
-	if (1)
-	{
-		char const * txtpoint = csc_malloc_file (filename);
-		points_read (txtpoint, point_pos1, &point_pos1_count);
-		free ((void*)txtpoint);
-	}
+	points_read_filename (filename, s1.pc, &s1.pc_count);
+	points_test_sinus_slope (s1.pc);
 
-	memcpy (point_pos1 + LIDAR_WH*POINT_STRIDE, point_pos1, LIDAR_WH*POINT_STRIDE*sizeof(float));
-
-	//Remove bad points:
-	point_filter (point_pos1, POINT_STRIDE, point_pos1, POINT_STRIDE, &point_pos1_count, 3, 1.0f);
-
-	//Move the center of all points to origin:
-	vf32_move_center_to_zero (DIMENSION (3), point_pos1, POINT_STRIDE, point_pos1_count, pc_mean);
-
-	//Calculate the covariance matrix of the points which can be used to get the orientation of the points:
-	mf32_get_covariance (DIMENSION (3), (float*)point_pos1, POINT_STRIDE, point_pos1_count, c);
-
-	//Calculate the eigen vectors (c) and eigen values (w) from covariance matrix (c) which will get the orientation of the points:
-	//https://software.intel.com/sites/products/documentation/doclib/mkl_sa/11/mkl_lapack_examples/dsyev.htm
-	LAPACKE_ssyev (LAPACK_COL_MAJOR, 'V', 'U', DIMENSION (3), c, DIMENSION (3), w);
-	//LAPACK_ssyev ();
-	printf ("eigen vector:\n"); m3f32_print (c, stdout);
-	printf ("eigen value: %f %f %f\n", w[0], w[1], w[2]);
-
-	//Rectify every point by this rotation matrix which is the current orientation of the points:
-	float rotation[3*3] =
-	{
-	c[3], c[6], c[0],
-	c[4], c[7], c[1],
-	c[5], c[8], c[2]
-	};
-	//TODO: Do a matrix matrix multiplication instead of matrix vector multiplication:
-	for (uint32_t i = 0; i < point_pos1_count; ++i)
-	{
-		float * v = point_pos1 + (i * POINT_STRIDE);
-		mv3f32_mul (v, rotation, v);
-	}
-	//cblas_sgemm (CblasColMajor, CblasTrans, CblasNoTrans, 4, point_pos1_count, 4, 1.0f, rotation, 4, point_pos1, 4, 0.0f, point_pos1, 4);
-
-
-	//Project 3D points to a 2D image:
-	//The center of the image is put ontop of the origin where all points are:
-	point_project (img1, imgf, IMG_XN, IMG_YN, point_pos1, POINT_STRIDE, point_pos1_count);
-
-
-	//Amplify skitrack pattern in the 2D image:
-	image_skitrack_convolution (img2, img1, IMG_XN, IMG_YN);
-	//vf32_remove_low_values (img2, IMG_XN*IMG_YN);
-	image_convolution1 (img3, img2, IMG_XN, IMG_YN);
-	vf32_remove_low_values (img3, IMG_XN*IMG_YN);
-	//memcpy (img3, img2, sizeof(img3));
-
-
-
-	//Find the most common lines direction in the image which hopefully matches the direction of the skitrack:
-	//Project 2D image to a 1D image in the the most common direction (k):
-	float q1[IMG_YN] = {0.0f};
-	float q2[IMG_YN] = {0.0f};
-	//float k = vf32_most_common_line (img3, IMG_XN, IMG_YN, 20);
-	float k = vf32_most_common_line2 (img3, IMG_XN, IMG_YN, q1);
-	//vf32_project_2d_to_1d (img3, IMG_XN, IMG_YN, k, q1);
-	vf32_project_2d_to_1d_pn (img3, IMG_XN, IMG_YN, k, q1);
-	vf32_remove_low_values (q1, IMG_YN);
-
-
-	//Amplify skitrack pattern in the 1D image:
-	float skitrack_kernel1d[] =
-	{
-	 1.0f,  3.0f,  1.0f,
-	-3.0f, -9.0f, -3.0f,
-	 1.0f,  7.0f,  1.0f,
-	-3.0f, -9.0f, -3.0f,
-	 1.0f,  3.0f,  1.0f
-	};
-	vf32_convolution1d (q1, IMG_YN, q2, skitrack_kernel1d, countof (skitrack_kernel1d));
-
-
-	//Find the peaks which should be where the skitrack is positioned:
-	uint32_t g[4] = {UINT32_MAX};
-	{
-		float q[IMG_YN] = {0.0f};
-		memcpy (q, q2, sizeof (q));
-		vf32_find_peaks (q, IMG_YN, g, 2, 16, 20);
-	}
+	memcpy (pointpos, s1.pc, LIDAR_WH*POINT_STRIDE*sizeof(float));
+	skitrack1_process (&s1);
+	skitrack2_process (&s2, s1.pc, s1.pc_count);
+	memcpy (pointpos + LIDAR_WH*POINT_STRIDE, s1.pc, LIDAR_WH*POINT_STRIDE*sizeof(float));
 
 	//Visualize the skitrack and more information:
-	//vf32_normalize (countof (q1), q1, q1);
-	//vf32_normalize (countof (q2), q2, q2);
-	image_visual (imgv, img1, IMG_XN, IMG_YN, q1, q2, g, 2, k);
+	image_visual (imgv, s2.img3, IMG_XN, IMG_YN, s2.q1, s2.q2, s2.g, SKITRACK2_PEAKS_COUNT, s2.k);
 
 
 
@@ -688,105 +106,59 @@ void show (const char * filename, nng_socket socks[])
 	//pix_rgba[2*IMG_XN + 0] |= RGBA(0x00, 0xFF, 0xff, 0xFF);
 	//pix_rgba[2*IMG_XN + 1] |= RGBA(0x00, 0xFF, 0xff, 0xFF);
 
+	struct v4f32_line linepos1[VISUAL_LINE_COUNT];
+	struct u32_line linecol1[VISUAL_LINE_COUNT];
+
+	vf32_set3 (linepos1[VISUAL_LINE_ORIGIN_0].a, 0.0f, 0.0f, 0.0f);
+	vf32_set3 (linepos1[VISUAL_LINE_ORIGIN_0].b, 1.0f, 0.0f, 0.0f);
+	vf32_set3 (linepos1[VISUAL_LINE_ORIGIN_1].a, 0.0f, 0.0f, 0.0f);
+	vf32_set3 (linepos1[VISUAL_LINE_ORIGIN_1].b, 0.0f, 1.0f, 0.0f);
+	vf32_set3 (linepos1[VISUAL_LINE_ORIGIN_2].a, 0.0f, 0.0f, 0.0f);
+	vf32_set3 (linepos1[VISUAL_LINE_ORIGIN_2].b, 0.0f, 0.0f, 1.0f);
+
+	vf32_set3 (linepos1[VISUAL_LINE_PCA_0].a, 0.0f   , 0.0f   , 0.0f   );
+	vf32_set3 (linepos1[VISUAL_LINE_PCA_0].b, s1.c[0], s1.c[1], s1.c[2]);
+	vf32_set3 (linepos1[VISUAL_LINE_PCA_1].a, 0.0f   , 0.0f   , 0.0f   );
+	vf32_set3 (linepos1[VISUAL_LINE_PCA_1].b, s1.c[3], s1.c[4], s1.c[5]);
+	vf32_set3 (linepos1[VISUAL_LINE_PCA_2].a, 0.0f   , 0.0f   , 0.0f   );
+	vf32_set3 (linepos1[VISUAL_LINE_PCA_2].b, s1.c[6], s1.c[7], s1.c[8]);
 
 
-	float lines[18*4] =
+
+
+	linecol1[VISUAL_LINE_ORIGIN_0].a = RGBA(0xFF, 0x00, 0x00, 0xFF);
+	linecol1[VISUAL_LINE_ORIGIN_0].b = RGBA(0xFF, 0x00, 0x00, 0xFF);
+	linecol1[VISUAL_LINE_ORIGIN_1].a = RGBA(0x00, 0xFF, 0x00, 0xFF);
+	linecol1[VISUAL_LINE_ORIGIN_1].b = RGBA(0x00, 0xFF, 0x00, 0xFF);
+	linecol1[VISUAL_LINE_ORIGIN_2].a = RGBA(0x00, 0x00, 0xFF, 0xFF);
+	linecol1[VISUAL_LINE_ORIGIN_2].b = RGBA(0x00, 0x00, 0xFF, 0xFF);
+
+	linecol1[VISUAL_LINE_PCA_0].a = RGBA(0xFF, 0x00, 0x00, 0xFF) | RGBA(0xAA, 0xAA, 0xAA, 0xFF);
+	linecol1[VISUAL_LINE_PCA_0].b = RGBA(0xFF, 0x00, 0x00, 0xFF) | RGBA(0xAA, 0xAA, 0xAA, 0xFF);
+	linecol1[VISUAL_LINE_PCA_1].a = RGBA(0x00, 0xFF, 0x00, 0xFF) | RGBA(0xAA, 0xAA, 0xAA, 0xFF);
+	linecol1[VISUAL_LINE_PCA_1].b = RGBA(0x00, 0xFF, 0x00, 0xFF) | RGBA(0xAA, 0xAA, 0xAA, 0xFF);
+	linecol1[VISUAL_LINE_PCA_2].a = RGBA(0x00, 0x00, 0xFF, 0xFF) | RGBA(0xAA, 0xAA, 0xAA, 0xFF);
+	linecol1[VISUAL_LINE_PCA_2].b = RGBA(0x00, 0x00, 0xFF, 0xFF) | RGBA(0xAA, 0xAA, 0xAA, 0xFF);
+
+	for (int i = VISUAL_LINE_SKITRACK; i <= VISUAL_LINE_SKITRACK_END; ++i)
 	{
-	//Origin axis
-	0.0f, 0.0f, 0.0f, 1.0f, //Origin axis 1 start
-	1.0f, 0.0f, 0.0f, 1.0f, //Origin axis 1 end
-	0.0f, 0.0f, 0.0f, 1.0f, //Origin axis 2 start
-	0.0f, 1.0f, 0.0f, 1.0f, //Origin axis 2 end
-	0.0f, 0.0f, 0.0f, 1.0f, //Origin axis 3 start
-	0.0f, 0.0f, 1.0f, 1.0f, //Origin axis 3 end
-
-	//PCA axis
-	0.0f, 0.0f, 0.0f, 1.0f, //PCA axis 1 start
-	c[0], c[1], c[2], 1.0f, //PCA axis 1 end
-	0.0f, 0.0f, 0.0f, 1.0f, //PCA axis 2 start
-	c[3], c[4], c[5], 1.0f, //PCA axis 2 end
-	0.0f, 0.0f, 0.0f, 1.0f, //PCA axis 3 start
-	c[6], c[7], c[8], 1.0f, //PCA axis 3 end
-
-	//TODO: What is this?
-	0.0f, 0.0f, 0.0f, 1.0f,
-	0.0f, 0.0f, 0.0f, 1.0f,
-	0.0f, 0.0f, 0.0f, 1.0f,
-	0.0f, 0.0f, 0.0f, 1.0f,
-	0.0f, 0.0f, 0.0f, 1.0f,
-	0.0f, 0.0f, 0.0f, 1.0f,
-	/*
-	0.0f, 0.0f, 0.0f, 1.0f,
-	-c[0], -c[1], -c[2], 1.0f,
-	0.0f, 0.0f, 0.0f, 1.0f,
-	-c[3], -c[4], -c[5], 1.0f,
-	0.0f, 0.0f, 0.0f, 1.0f,
-	-c[6], -c[7], -c[8], 1.0f,
-	*/
-
-	};
-
-
-	uint32_t line_col[18] =
-	{
-	//Origin axis:
-	RGBA(0xFF, 0x00, 0x00, 0xAA), //Origin axis 1 start
-	RGBA(0xFF, 0x00, 0x00, 0xAA), //Origin axis 1 end
-	RGBA(0x00, 0xFF, 0x00, 0xAA), //Origin axis 2 start
-	RGBA(0x00, 0xFF, 0x00, 0xAA), //Origin axis 2 end
-	RGBA(0x00, 0x00, 0xFF, 0xAA), //Origin axis 3 start
-	RGBA(0x00, 0x00, 0xFF, 0xAA), //Origin axis 3 end
-
-	//PCA axis colors:
-	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 1 start
-	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 1 end
-	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 2 start
-	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 2 end
-	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 3 start
-	RGBA(0xFF, 0xFF, 0xFF, 0x99), //PCA axis 3 end
-
-	//TODO: What is this?
-	RGBA(0x33, 0xFF, 0x88, 0xFF),
-	RGBA(0x33, 0xFF, 0x88, 0xFF),
-	RGBA(0x33, 0xFF, 0x88, 0xFF),
-	RGBA(0x33, 0xFF, 0x88, 0xFF),
-	RGBA(0x33, 0xFF, 0x88, 0xFF),
-	RGBA(0x33, 0xFF, 0x88, 0xFF),
-
-	};
-
-
-
+		linecol1[i].a = RGBA(0x77, 0xFF, 0x11, 0xFF);
+		linecol1[i].b = RGBA(0x77, 0xFF, 0x11, 0xFF);
+	}
 
 	{
-		pixel_to_point (lines+12*4, IMG_XN, IMG_YN, 0.0f, -10.0f, g[0] - 10.0f * k);
-		pixel_to_point (lines+13*4, IMG_XN, IMG_YN, 0.0f,  30.0f, g[0] + 30.0f * k);
-		pixel_to_point (lines+14*4, IMG_XN, IMG_YN, 0.0f, -10.0f, g[1] - 10.0f * k);
-		pixel_to_point (lines+15*4, IMG_XN, IMG_YN, 0.0f,  30.0f, g[1] + 30.0f * k);
+		pixel_to_point (linepos1[VISUAL_LINE_SKITRACK+0].a, IMG_XN, IMG_YN, 0.0f, -10.0f, s2.g[0] - 10.0f * s2.k);
+		pixel_to_point (linepos1[VISUAL_LINE_SKITRACK+0].b, IMG_XN, IMG_YN, 0.0f,  30.0f, s2.g[0] + 30.0f * s2.k);
+		pixel_to_point (linepos1[VISUAL_LINE_SKITRACK+1].a, IMG_XN, IMG_YN, 0.0f, -10.0f, s2.g[1] - 10.0f * s2.k);
+		pixel_to_point (linepos1[VISUAL_LINE_SKITRACK+1].b, IMG_XN, IMG_YN, 0.0f,  30.0f, s2.g[1] + 30.0f * s2.k);
 		float rot[3*3];
-
-		memcpy (rot, rotation, sizeof (rot));
-		matInv (rot, 3);
-
-
-		mv3f32_mul (lines+12*4, rot, lines+12*4);
-		mv3f32_mul (lines+13*4, rot, lines+13*4);
-		mv3f32_mul (lines+14*4, rot, lines+14*4);
-		mv3f32_mul (lines+15*4, rot, lines+15*4);
-		vvf32_add (4, lines+12*4, lines+12*4, pc_mean);
-		vvf32_add (4, lines+13*4, lines+13*4, pc_mean);
-		vvf32_add (4, lines+14*4, lines+14*4, pc_mean);
-		vvf32_add (4, lines+15*4, lines+15*4, pc_mean);
-
-
-		//TODO: Do a matrix matrix multiplication instead of matrix vector multiplication:
-		//for (float * v = lines+12*4; v < lines+15*4; v += POINT_STRIDE)
+		memcpy (rot, s1.crot, sizeof (rot));
+		m3f32_lapacke_inverse (rot, 3);
+		for (float * i = linepos1[VISUAL_LINE_SKITRACK+0].a; i <= linepos1[VISUAL_LINE_SKITRACK_END].b; i += POINT_STRIDE)
 		{
-			//mv3f32_mul (v, rot, v);
+			mv3f32_mul (i, rot, i);
+			vvf32_add (4, i, i, s1.mean);
 		}
-
-		//vf32_print (stdout, p0, 4, "%+f2.2 ");
-		//vf32_print (stdout, p1, 4, "%+f2.2 ");
 	}
 
 
@@ -794,11 +166,11 @@ void show (const char * filename, nng_socket socks[])
 	//Send visual information to the graphic server:
 	{
 		int r;
-		r = nng_send (socks[MAIN_NNGSOCK_LINE_POS], lines, 18*4*sizeof(float), 0);
+		r = nng_send (socks[MAIN_NNGSOCK_LINE_POS], linepos1, VISUAL_LINE_COUNT*POINT_STRIDE*2*sizeof(float), 0);
 		perror (nng_strerror (r));
-		r = nng_send (socks[MAIN_NNGSOCK_LINE_COL], line_col, 18*sizeof(uint32_t), 0);
+		r = nng_send (socks[MAIN_NNGSOCK_LINE_COL], linecol1, VISUAL_LINE_COUNT*2*sizeof(uint32_t), 0);
 		perror (nng_strerror (r));
-		r = nng_send (socks[MAIN_NNGSOCK_POINTCLOUD_POS], point_pos1, LIDAR_WH*4*sizeof(float)*2, 0);
+		r = nng_send (socks[MAIN_NNGSOCK_POINTCLOUD_POS], pointpos, LIDAR_WH*POINT_STRIDE*sizeof(float)*2, 0);
 		perror (nng_strerror (r));
 		r = nng_send (socks[MAIN_NNGSOCK_POINTCLOUD_COL], pointcol, LIDAR_WH*sizeof(uint32_t)*2, 0);
 		perror (nng_strerror (r));
@@ -814,6 +186,11 @@ int main (int argc, char const * argv[])
 {
 	ASSERT (argc);
 	ASSERT (argv);
+
+#ifdef USING_QT_CREATOR
+	chdir ("../ce30_demo/");
+#endif
+
 	csc_crossos_enable_ansi_color();
 
 	nng_socket socks[MAIN_NNGSOCK_COUNT] = {{0}};
@@ -824,9 +201,8 @@ int main (int argc, char const * argv[])
 	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_POS,       "tcp://localhost:9006");
 	main_nng_pairdial (socks + MAIN_NNGSOCK_LINE_COL,       "tcp://localhost:9007");
 
-	chdir ("../ce30_demo/txtpoints/10");
-
-	//show ("14_13_57_24145.txt", socks);
+	chdir ("txtpoints/1");
+	show ("14_13_57_24145.txt", socks);
 	//show ("14_13_55_22538.txt", socks);
 	//show ("14_13_53_20565.txt", socks);
 	//show ("14_13_52_19801.txt", socks);
@@ -840,7 +216,7 @@ int main (int argc, char const * argv[])
 	//show ("14_16_57_204577.txt", socks);
 	//return 0;
 
-#if 1
+#if 0
 	FILE * f = popen ("ls", "r");
 	ASSERT (f);
 	char buf[200] = {'\0'};

@@ -4,7 +4,7 @@ CONFIG -= app_bundle
 CONFIG -= qt
 CONFIG += static
 
-
+DEFINES += USING_QT_CREATOR
 DEFINES += NNG_STATIC_LIB
 
 QMAKE_CFLAGS += -Wno-unused-function
